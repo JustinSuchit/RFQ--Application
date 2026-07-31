@@ -582,6 +582,13 @@ export async function updateIntegrationSettingAction(
     return { ...initialSettingsState, error: "Invalid integration provider." };
   }
 
+  if (provider === "microsoft_graph") {
+    return {
+      ...initialSettingsState,
+      error: "Use the Microsoft 365 OAuth connection flow.",
+    };
+  }
+
   const supabase = await createClient();
   const payload = {
     organization_id: organization.id,

@@ -8,5 +8,6 @@ export const sidebarNavigation: NavigationItem[] = [
   { label: "Suppliers", href: "/suppliers", symbol: "S" },
   { label: "Quotes", href: "/quotes", symbol: "Q" },
   { label: "Approvals", href: "/approvals", symbol: "A" },
+  { label: "Integrations", href: "/settings/email", symbol: "I" },
   { label: "Settings", href: "/settings", symbol: "T" },
 ];

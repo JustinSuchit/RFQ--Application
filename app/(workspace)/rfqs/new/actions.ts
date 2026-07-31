@@ -3,6 +3,10 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
+import {
+  generateNextRfqNumber,
+  isUniqueViolation,
+} from "@/lib/rfqs/numbering";
 
 export type CreateRfqState = {
   error: string;
@@ -15,31 +19,6 @@ function optionalString(value: FormDataEntryValue | null) {
 
 function requiredString(value: FormDataEntryValue | null) {
   return String(value ?? "").trim();
-}
-
-function currentYearRange() {
-  const year = new Date().getFullYear();
-  return {
-    year,
-    start: `${year}-01-01T00:00:00.000Z`,
-    end: `${year + 1}-01-01T00:00:00.000Z`,
-  };
-}
-
-async function getRfqNumberSettings(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  organizationId: string,
-) {
-  const { data } = await supabase
-    .from("organization_settings")
-    .select("rfq_prefix, rfq_number_padding")
-    .eq("organization_id", organizationId)
-    .maybeSingle();
-
-  return {
-    prefix: String(data?.rfq_prefix || "RFQ"),
-    padding: Number(data?.rfq_number_padding || 6),
-  };
 }
 
 export async function createRfqAction(
@@ -136,47 +115,52 @@ export async function createRfqAction(
     customerId = customer.id;
   }
 
-  const [{ prefix, padding }, { year, start, end }] = [
-    await getRfqNumberSettings(supabase, organization.id),
-    currentYearRange(),
-  ];
-  const { count, error: countError } = await supabase
-    .from("rfqs")
-    .select("id", { count: "exact", head: true })
-    .eq("organization_id", organization.id)
-    .gte("created_at", start)
-    .lt("created_at", end);
+  let rfq: { id: string } | null = null;
+  let rfqNumber = "";
+  let lastInsertError: { message: string; code?: string } | null = null;
 
-  if (countError) {
-    return { error: countError.message };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const numberResult = await generateNextRfqNumber({
+      supabase,
+      organizationId: organization.id,
+      offset: attempt,
+    });
+
+    if (numberResult.error) return { error: numberResult.error };
+
+    rfqNumber = numberResult.rfqNumber;
+    const { data: insertedRfq, error: rfqInsertError } = await supabase
+      .from("rfqs")
+      .insert({
+        organization_id: organization.id,
+        customer_id: customerId,
+        rfq_number: rfqNumber,
+        subject,
+        source,
+        priority,
+        status: "draft",
+        submission_deadline: submissionDeadline,
+        delivery_location: deliveryLocation,
+        notes,
+        created_by: user.id,
+      })
+      .select("id")
+      .single();
+
+    if (!rfqInsertError && insertedRfq) {
+      rfq = insertedRfq;
+      break;
+    }
+
+    lastInsertError = rfqInsertError;
+    if (!isUniqueViolation(rfqInsertError)) break;
   }
 
-  const rfqNumber = `${prefix}-${year}-${String((count ?? 0) + 1).padStart(
-    padding,
-    "0",
-  )}`;
-
-  const { data: rfq, error: rfqInsertError } = await supabase
-    .from("rfqs")
-    .insert({
-      organization_id: organization.id,
-      customer_id: customerId,
-      rfq_number: rfqNumber,
-      subject,
-      source,
-      priority,
-      status: "draft",
-      submission_deadline: submissionDeadline,
-      delivery_location: deliveryLocation,
-      notes,
-      created_by: user.id,
-    })
-    .select("id")
-    .single();
-
-  if (rfqInsertError || !rfq) {
+  if (!rfq) {
     return {
-      error: rfqInsertError?.message ?? "Unable to create the RFQ record.",
+      error: isUniqueViolation(lastInsertError)
+        ? "Could not generate a unique RFQ number. Please try again."
+        : lastInsertError?.message ?? "Unable to create the RFQ record.",
     };
   }
 
@@ -210,7 +194,7 @@ export async function createRfqAction(
     });
 
   if (activityInsertError) {
-    return { error: activityInsertError.message };
+    console.warn("Activity log insert failed", activityInsertError.message);
   }
 
   redirect("/rfqs");

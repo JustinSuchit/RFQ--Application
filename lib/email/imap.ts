@@ -1,0 +1,479 @@
+import { ImapFlow, type MailboxObject } from "imapflow";
+import { simpleParser } from "mailparser";
+import { classifyRfqEmail, type RfqClassification } from "@/lib/email/rfq-classifier";
+import { createClient } from "@/lib/supabase/server";
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+export type ImapConnectionRow = {
+  id: string;
+  organization_id: string;
+  provider: string;
+  mailbox_email: string | null;
+  imap_host: string | null;
+  imap_port: number | null;
+  imap_secure: boolean | null;
+  imap_username: string | null;
+  imap_password_encrypted: string | null;
+  scan_folder: string | null;
+  only_unread: boolean | null;
+  last_uid: number | null;
+  last_scan_at: string | null;
+  is_active: boolean | null;
+};
+
+export type ImapTestResult = {
+  success: true;
+  mailbox: string;
+  exists: number;
+  unseen: number;
+};
+
+export type ImapScanSummary = {
+  scanned: number;
+  insertedOrUpdated: number;
+  likelyRfq: number;
+  possibleRfq: number;
+  skippedNotRfq: number;
+  highestUid: number | null;
+};
+
+type ParsedScannedMessage = {
+  uid: number;
+  flags: string[];
+  fromEmail: string;
+  fromName: string | null;
+  subject: string;
+  bodyPreview: string;
+  receivedAt: string;
+  hasAttachments: boolean;
+  attachmentCount: number;
+  classification: RfqClassification;
+  matchedKeywords: string[];
+  classificationReason: string;
+};
+
+export type ImapErrorDetails = {
+  message: string;
+  code?: string;
+  command?: string;
+  response?: string;
+  responseText?: string;
+  serverResponse?: string;
+  authenticationFailed: boolean;
+};
+
+export class ImapOperationError extends Error {
+  details: ImapErrorDetails;
+
+  constructor(details: ImapErrorDetails) {
+    super(details.message);
+    this.name = "ImapOperationError";
+    this.details = details;
+    this.code = details.code;
+    this.command = details.command;
+    this.response = details.response;
+    this.responseText = details.responseText;
+    this.serverResponse = details.serverResponse;
+    this.authenticationFailed = details.authenticationFailed;
+  }
+
+  code?: string;
+  command?: string;
+  response?: string;
+  responseText?: string;
+  serverResponse?: string;
+  authenticationFailed: boolean;
+}
+
+export function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function getImapErrorDetails(error: unknown): ImapErrorDetails {
+  const err = error as {
+    message?: unknown;
+    code?: unknown;
+    command?: unknown;
+    response?: unknown;
+    responseText?: unknown;
+    serverResponse?: unknown;
+    authenticationFailed?: unknown;
+    details?: ImapErrorDetails;
+  };
+
+  if (err?.details) {
+    return err.details;
+  }
+
+  return {
+    message: err?.message ? String(err.message) : String(error),
+    code: err?.code ? String(err.code) : undefined,
+    command: err?.command ? String(err.command) : undefined,
+    response: err?.response ? String(err.response) : undefined,
+    responseText: err?.responseText ? String(err.responseText) : undefined,
+    serverResponse: err?.serverResponse ? String(err.serverResponse) : undefined,
+    authenticationFailed: Boolean(err?.authenticationFailed),
+  };
+}
+
+export function normalizeImapError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+
+  if (lower.includes("auth") || lower.includes("login") || lower.includes("credentials")) {
+    return "Invalid username or password for the IMAP mailbox.";
+  }
+
+  if (lower.includes("enotfound") || lower.includes("getaddrinfo") || lower.includes("dns")) {
+    return "Invalid IMAP host. Check the mailbox server name.";
+  }
+
+  if (lower.includes("certificate") || lower.includes("tls") || lower.includes("ssl")) {
+    return "TLS/SSL connection issue. Check the host, port, and SSL/TLS setting.";
+  }
+
+  if (lower.includes("mailbox") || lower.includes("folder") || lower.includes("not found")) {
+    return "Folder not found. Check the scan folder name.";
+  }
+
+  if (lower.includes("timeout") || lower.includes("timed out")) {
+    return "IMAP connection timed out. Check the host and port.";
+  }
+
+  return message || "Unable to connect to the IMAP mailbox.";
+}
+
+export function validateImapConnection(connection: ImapConnectionRow | null) {
+  if (!connection) {
+    return "No active IMAP connection configured. Save the IMAP connection first.";
+  }
+
+  if (!connection.imap_host) return "Missing IMAP host.";
+  if (!connection.imap_port) return "Missing IMAP port.";
+  if (!connection.imap_username) return "Missing IMAP username.";
+  if (!connection.imap_password_encrypted) {
+    return "Missing IMAP password or app password.";
+  }
+  if (!connection.scan_folder) return "Missing scan folder.";
+
+  return "";
+}
+
+function createImapClient(connection: ImapConnectionRow) {
+  const host = connection.imap_host!;
+  const username = connection.imap_username!;
+  const password = connection.imap_password_encrypted!;
+
+  return new ImapFlow({
+    host,
+    port: connection.imap_port ?? 993,
+    secure: connection.imap_secure ?? true,
+    auth: {
+      user: username,
+      pass: password,
+    },
+    clientInfo: {
+      name: "ProcureFlow RFQ SaaS",
+      vendor: "ProcureFlow",
+    },
+    connectionTimeout: 20000,
+    greetingTimeout: 12000,
+    disableAutoIdle: true,
+    logger: false,
+  });
+}
+
+async function connectAndOpenMailbox(connection: ImapConnectionRow) {
+  const validationError = validateImapConnection(connection);
+  if (validationError) throw new Error(validationError);
+
+  const client = createImapClient(connection);
+  const mailboxName = connection.scan_folder!;
+
+  try {
+    await client.connect();
+    const mailbox = await client.mailboxOpen(mailboxName, { readOnly: true });
+    return { client, mailbox, mailboxName };
+  } catch (error) {
+    try {
+      await client.logout();
+    } catch {
+      // Connection may not be established enough to log out cleanly.
+    }
+
+    throw new ImapOperationError(getImapErrorDetails(error));
+  }
+}
+
+export async function getActiveImapConnectionForOrganization(
+  supabase: SupabaseClient,
+  organizationId: string,
+) {
+  const { data, error } = await supabase
+    .from("email_connections")
+    .select(
+      "id, organization_id, provider, mailbox_email, imap_host, imap_port, imap_secure, imap_username, imap_password_encrypted, scan_folder, only_unread, last_uid, last_scan_at, is_active",
+    )
+    .eq("organization_id", organizationId)
+    .eq("provider", "imap")
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return (data ?? null) as ImapConnectionRow | null;
+}
+
+export async function testImapConnection(
+  connection: ImapConnectionRow,
+): Promise<ImapTestResult> {
+  const validationError = validateImapConnection(connection);
+  if (validationError) throw new Error(validationError);
+
+  const client = createImapClient(connection);
+  const scanFolder = connection.scan_folder!;
+
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock(scanFolder, { readOnly: true });
+
+    try {
+      const status = client.mailbox;
+      if (!status) {
+        throw new Error("Folder not found. Check the scan folder name.");
+      }
+
+      return {
+        success: true,
+        mailbox: scanFolder,
+        exists: status?.exists ?? 0,
+        unseen: await getUnseenCount(client, status),
+      };
+    } finally {
+      lock.release();
+    }
+  } catch (error) {
+    throw new ImapOperationError(getImapErrorDetails(error));
+  } finally {
+    try {
+      await client.logout();
+    } catch {
+      // Ignore logout failures after a failed connection attempt.
+    }
+  }
+}
+
+export async function openImapMailbox(
+  connection: ImapConnectionRow,
+) {
+  const { client, mailbox, mailboxName } = await connectAndOpenMailbox(connection);
+
+  try {
+    return {
+      success: true,
+      mailbox: mailboxName,
+      exists: mailbox.exists,
+      unseen: await getUnseenCount(client, mailbox),
+    };
+  } finally {
+    await client.logout();
+  }
+}
+
+async function getUnseenCount(client: ImapFlow, mailbox: MailboxObject) {
+  if (mailbox.exists === 0) return 0;
+
+  const unseen = await client.search({ seen: false }, { uid: true });
+  return Array.isArray(unseen) ? unseen.length : 0;
+}
+
+function latestUids(uids: number[], limit: number) {
+  return [...uids]
+    .sort((left, right) => left - right)
+    .slice(Math.max(0, uids.length - limit));
+}
+
+async function getUidsToScan(client: ImapFlow, connection: ImapConnectionRow) {
+  const lastUid = connection.last_uid ?? null;
+  const baseQuery = connection.only_unread ? { seen: false } : { all: true };
+  const searchResult = await client.search(
+    lastUid
+      ? { ...baseQuery, uid: `${lastUid + 1}:*` }
+      : baseQuery,
+    { uid: true },
+  );
+  const uids = Array.isArray(searchResult) ? searchResult : [];
+  const filtered = lastUid ? uids.filter((uid) => uid > lastUid) : latestUids(uids, 25);
+
+  return filtered.sort((left, right) => left - right);
+}
+
+async function parseScannedMessage(
+  uid: number,
+  source: Buffer,
+  flags: Set<string> | undefined,
+): Promise<ParsedScannedMessage> {
+  const parsed = await simpleParser(source);
+  const firstSender = parsed.from?.value?.[0];
+  const fromEmail = firstSender?.address || "unknown@example.invalid";
+  const fromName = firstSender?.name || null;
+  const subject = parsed.subject || "(No subject)";
+  const rawBody = parsed.text || "";
+  const bodyPreview = rawBody.replace(/\s+/g, " ").trim().slice(0, 1000);
+  const attachments = parsed.attachments ?? [];
+  let classification;
+
+  try {
+    classification = classifyRfqEmail(subject, bodyPreview);
+  } catch {
+    classification = {
+      classification: "possible_rfq" as const,
+      matchedKeywords: [],
+      reason: "Classifier failed, so this email was kept for review.",
+    };
+  }
+
+  return {
+    uid,
+    flags: Array.from(flags ?? []),
+    fromEmail,
+    fromName,
+    subject,
+    bodyPreview,
+    receivedAt: (parsed.date ?? new Date()).toISOString(),
+    hasAttachments: attachments.length > 0,
+    attachmentCount: attachments.length,
+    classification: classification.classification,
+    matchedKeywords: classification.matchedKeywords,
+    classificationReason: classification.reason,
+  };
+}
+
+export async function scanImapInbox(
+  supabase: SupabaseClient,
+  connection: ImapConnectionRow,
+): Promise<ImapScanSummary> {
+  const { client, mailbox, mailboxName } = await connectAndOpenMailbox(connection);
+
+  try {
+    if (mailbox.exists === 0) {
+      throw new Error("Mailbox has no messages.");
+    }
+
+    const uids = await getUidsToScan(client, connection);
+
+    if (uids.length === 0) {
+      await supabase
+        .from("email_connections")
+        .update({ last_scan_at: new Date().toISOString() })
+        .eq("id", connection.id)
+        .eq("organization_id", connection.organization_id);
+
+      return {
+        scanned: 0,
+        insertedOrUpdated: 0,
+        likelyRfq: 0,
+        possibleRfq: 0,
+        skippedNotRfq: 0,
+        highestUid: connection.last_uid ?? null,
+      };
+    }
+
+    const scannedMessages: ParsedScannedMessage[] = [];
+
+    for await (const message of client.fetch(
+      uids,
+      { uid: true, source: true, flags: true },
+      { uid: true },
+    )) {
+      if (message.source) {
+        scannedMessages.push(
+          await parseScannedMessage(message.uid, message.source, message.flags),
+        );
+      }
+    }
+
+    const highestUid = scannedMessages.reduce(
+      (currentHighest, message) => Math.max(currentHighest, message.uid),
+      connection.last_uid ?? 0,
+    );
+
+    let insertedOrUpdated = 0;
+    let likelyRfq = 0;
+    let possibleRfq = 0;
+    let skippedNotRfq = 0;
+
+    for (const message of scannedMessages) {
+      if (message.classification === "likely_rfq") likelyRfq += 1;
+      if (message.classification === "possible_rfq") possibleRfq += 1;
+      if (message.classification === "not_rfq") {
+        skippedNotRfq += 1;
+        continue;
+      }
+
+      const { error } = await supabase.from("email_messages").upsert(
+        {
+          organization_id: connection.organization_id,
+          provider: "imap",
+          provider_message_id: `imap-${message.uid}`,
+          email_connection_id: connection.id,
+          conversation_id: null,
+          from_email: message.fromEmail,
+          from_name: message.fromName,
+          subject: message.subject,
+          body_preview: message.bodyPreview,
+          body: message.bodyPreview,
+          received_at: message.receivedAt,
+          has_attachments: message.hasAttachments,
+          matched_keywords: message.matchedKeywords,
+          classification: message.classification,
+          classification_reason: message.classificationReason,
+          is_rfq: message.classification === "likely_rfq" ? true : null,
+          raw_payload: {
+            uid: message.uid,
+            flags: message.flags,
+            mailbox: mailboxName,
+            provider: "imap",
+            attachment_count: message.attachmentCount,
+          },
+        },
+        { onConflict: "organization_id,provider_message_id" },
+      );
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      insertedOrUpdated += 1;
+    }
+
+    await supabase
+      .from("email_connections")
+      .update({
+        last_uid: highestUid || connection.last_uid,
+        last_scan_at: new Date().toISOString(),
+      })
+      .eq("id", connection.id)
+      .eq("organization_id", connection.organization_id);
+
+    return {
+      scanned: scannedMessages.length,
+      insertedOrUpdated,
+      likelyRfq,
+      possibleRfq,
+      skippedNotRfq,
+      highestUid: highestUid || null,
+    };
+  } catch (error) {
+    if (error instanceof ImapOperationError) {
+      throw error;
+    }
+
+    throw new Error(getErrorMessage(error));
+  } finally {
+    await client.logout();
+  }
+}

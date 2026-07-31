@@ -71,6 +71,13 @@ export type IntegrationSetting = {
   status: string;
 };
 
+export type EmailConnectionSummary = {
+  id: string;
+  provider: string;
+  mailbox_email: string | null;
+  is_active: boolean | null;
+};
+
 type Props = {
   organization: Organization;
   settings: OrganizationSettings;
@@ -78,6 +85,7 @@ type Props = {
   emailTemplates: EmailTemplate[];
   members: OrganizationMember[];
   integrations: IntegrationSetting[];
+  microsoftConnection: EmailConnectionSummary | null;
   canManage: boolean;
   hasEmailSettings: boolean;
 };
@@ -154,7 +162,7 @@ function FormFooter({ state, pending, canManage, label }: { state: SettingsActio
   ) : null;
 }
 
-export function SettingsManager({ organization, settings, approvalRules, emailTemplates, members, integrations, canManage, hasEmailSettings }: Props) {
+export function SettingsManager({ organization, settings, approvalRules, emailTemplates, members, integrations, microsoftConnection, canManage, hasEmailSettings }: Props) {
   const [activeTab, setActiveTab] = useState(tabs[0]);
   const [profileState, profileAction, profilePending] = useActionState(updateOrganizationProfileAction, initialState);
   const [brandState, brandAction, brandPending] = useActionState(updateBrandingAction, initialState);
@@ -273,9 +281,25 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
       ) : null}
 
       {activeTab === "Integrations" ? (
-        <Section title="Integrations" description="Prepare integration settings for future connection setup. Connection setup coming in the next phase.">
+        <Section title="Integrations" description="Connect mailbox and business-system integrations for this organization.">
           {hasEmailSettings ? <Link href="/settings/email" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm">Open Email Intake Settings</Link> : null}
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{providers.map(([provider, name, description]) => <IntegrationCard key={provider} provider={provider} name={name} description={description} status={integrationByProvider.get(provider)?.status ?? "not_connected"} canManage={canManage} />)}</div>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{providers.map(([provider, name, description]) => {
+            const integration = integrationByProvider.get(provider);
+            const isMicrosoft = provider === "microsoft_graph";
+            const microsoftConnected = Boolean(microsoftConnection?.is_active) || integration?.status === "connected";
+
+            return (
+              <IntegrationCard
+                key={provider}
+                provider={provider}
+                name={name}
+                description={description}
+                status={isMicrosoft ? (microsoftConnected ? "connected" : "not_connected") : integration?.status ?? "not_connected"}
+                mailboxEmail={isMicrosoft ? microsoftConnection?.mailbox_email ?? null : null}
+                canManage={canManage}
+              />
+            );
+          })}</div>
         </Section>
       ) : null}
     </div>
@@ -293,7 +317,93 @@ function MemberRow({ member, canManage }: { member: OrganizationMember; canManag
   return <tr><td className="px-4 py-4 font-mono text-xs text-slate-700">{member.user_id}</td><td className="px-4 py-4"><form action={formAction} className="flex items-center gap-2"><input type="hidden" name="memberId" value={member.id} /><select name="role" disabled={!canManage || pending} defaultValue={member.role} className={inputClass.replace("mt-2 ", "")}>{roleOptions.map((role) => <option key={role} value={role}>{role}</option>)}</select>{canManage ? <button disabled={pending} className="h-10 rounded-md border border-slate-200 px-3 text-xs font-semibold">{pending ? "Saving..." : "Save"}</button> : null}</form><Message state={state} /></td><td className="px-4 py-4 text-slate-600">{member.status}</td><td className="px-4 py-4 text-slate-600">{formatDate(member.created_at)}</td><td className="px-4 py-4 text-slate-600">{formatDate(member.joined_at)}</td></tr>;
 }
 
-function IntegrationCard({ provider, name, description, status, canManage }: { provider: string; name: string; description: string; status: string; canManage: boolean }) {
+function IntegrationCard({
+  provider,
+  name,
+  description,
+  status,
+  mailboxEmail,
+  canManage,
+}: {
+  provider: string;
+  name: string;
+  description: string;
+  status: string;
+  mailboxEmail?: string | null;
+  canManage: boolean;
+}) {
   const [state, formAction, pending] = useActionState(updateIntegrationSettingAction, initialState);
-  return <div className="rounded-md border border-slate-200 bg-white p-5"><h3 className="text-base font-semibold text-slate-950">{name}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{description}</p><p className="mt-4 text-xs font-semibold uppercase text-slate-500">Status: {status}</p><form action={formAction} className="mt-4 space-y-2"><input type="hidden" name="provider" value={provider} />{provider === "microsoft_graph" ? <Link href="/settings/email" className="mr-2 inline-flex h-9 items-center rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-700">Configure Email</Link> : null}{canManage ? <button disabled={pending} className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">{pending ? "Saving..." : "Connect"}</button> : null}<Message state={state} /></form></div>;
+  const [scanPending, setScanPending] = useState(false);
+  const [scanMessage, setScanMessage] = useState("");
+
+  async function scanMicrosoftInbox() {
+    setScanPending(true);
+    setScanMessage("");
+
+    try {
+      const response = await fetch("/api/integrations/microsoft/scan", {
+        method: "POST",
+      });
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+        scanned?: number;
+        insertedOrUpdated?: number;
+        likelyRfq?: number;
+        possibleRfq?: number;
+        skippedNotRfq?: number;
+        folder?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to scan Microsoft inbox.");
+      }
+
+      setScanMessage(
+        `Scanned folder ${result.folder || "inbox"}. Imported ${result.insertedOrUpdated ?? 0} RFQ-related emails. Skipped ${result.skippedNotRfq ?? 0} non-RFQ emails.`,
+      );
+    } catch (error) {
+      setScanMessage(
+        error instanceof Error ? error.message : "Unable to scan Microsoft inbox.",
+      );
+    } finally {
+      setScanPending(false);
+    }
+  }
+
+  if (provider === "microsoft_graph") {
+    const connected = status === "connected";
+
+    return (
+      <div className="rounded-md border border-slate-200 bg-white p-5">
+        <h3 className="text-base font-semibold text-slate-950">{name}</h3>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+        <p className="mt-4 text-xs font-semibold uppercase text-slate-500">Status: {connected ? "connected" : "not connected"}</p>
+        {mailboxEmail ? <p className="mt-2 text-sm text-slate-600">Mailbox: {mailboxEmail}</p> : null}
+        <div className="mt-4 flex flex-wrap gap-2">
+          {canManage ? (
+            <Link href="/api/integrations/microsoft/connect" className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">
+              {connected ? "Reconnect Microsoft 365" : "Connect Microsoft 365"}
+            </Link>
+          ) : null}
+          <Link href="/settings/email" className="inline-flex h-9 items-center rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-700">
+            Email Settings
+          </Link>
+          {connected ? (
+            <button
+              type="button"
+              disabled={scanPending}
+              onClick={scanMicrosoftInbox}
+              className="inline-flex h-9 items-center rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:text-slate-400"
+            >
+              {scanPending ? "Scanning..." : "Scan Microsoft Folder"}
+            </button>
+          ) : null}
+        </div>
+        {scanMessage ? <p className="mt-3 text-sm font-medium text-slate-700">{scanMessage}</p> : null}
+      </div>
+    );
+  }
+
+  return <div className="rounded-md border border-slate-200 bg-white p-5"><h3 className="text-base font-semibold text-slate-950">{name}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{description}</p><p className="mt-4 text-xs font-semibold uppercase text-slate-500">Status: {status}</p><form action={formAction} className="mt-4 space-y-2"><input type="hidden" name="provider" value={provider} />{canManage ? <button disabled={pending} className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">{pending ? "Saving..." : "Connect"}</button> : null}<Message state={state} /></form></div>;
 }

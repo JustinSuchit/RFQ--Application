@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import Link from "next/link";
 import {
   createRfqFromEmailAction,
   markEmailClassificationAction,
@@ -16,9 +17,11 @@ function Message({ error }: { error: string }) {
 export function EmailClassificationActions({
   emailId,
   hasRfq,
+  rfqId,
 }: {
   emailId: string;
   hasRfq: boolean;
+  rfqId?: string | null;
 }) {
   const [markState, markAction, markPending] = useActionState(
     markEmailClassificationAction,
@@ -53,15 +56,24 @@ export function EmailClassificationActions({
           Mark as Not RFQ
         </button>
       </form>
-      <form action={rfqAction}>
-        <input type="hidden" name="id" value={emailId} />
-        <button
-          disabled={rfqPending || hasRfq}
-          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+      {hasRfq && rfqId ? (
+        <Link
+          href={`/rfqs/${rfqId}`}
+          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          {hasRfq ? "RFQ Created" : rfqPending ? "Creating RFQ..." : "Create RFQ from Email"}
-        </button>
-      </form>
+          Open Linked RFQ
+        </Link>
+      ) : (
+        <form action={rfqAction}>
+          <input type="hidden" name="id" value={emailId} />
+          <button
+            disabled={rfqPending}
+            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {rfqPending ? "Creating RFQ..." : "Create RFQ from Email"}
+          </button>
+        </form>
+      )}
       <Message error={markState.error || rfqState.error} />
     </div>
   );

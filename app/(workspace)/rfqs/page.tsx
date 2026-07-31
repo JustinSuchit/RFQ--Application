@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { DeleteRfqButton } from "@/components/rfqs/delete-rfq-button";
 import { createClient } from "@/lib/supabase/server";
 import { rfqStatusTabs } from "@/lib/data/workspace-config";
 import { requireOrganization } from "@/lib/auth/session";
@@ -71,6 +72,7 @@ export default async function RfqsPage() {
     .order("created_at", { ascending: false });
 
   const rfqs = (data ?? []) as RfqRow[];
+  const canDeleteRfq = ["owner", "admin", "manager"].includes(organization.role);
 
   return (
     <div className="space-y-6">
@@ -168,12 +170,17 @@ export default async function RfqsPage() {
                       {formatDate(rfq.created_at)}
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-right">
-                      <Link
-                        href={`/rfqs/${rfq.id}`}
-                        className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
-                      >
-                        View
-                      </Link>
+                      <div className="flex justify-end gap-2">
+                        <Link
+                          href={`/rfqs/${rfq.id}`}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                        >
+                          View
+                        </Link>
+                        {canDeleteRfq ? (
+                          <DeleteRfqButton rfqId={rfq.id} compact />
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))

@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { DeleteEmailIntakeButton } from "@/components/email-intake/delete-email-button";
 import { requireOrganization } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 
 type EmailMessage = {
   id: string;
+  provider: string;
   from_name: string | null;
   from_email: string;
   subject: string;
@@ -40,9 +42,10 @@ export default async function EmailIntakePage() {
   const { data, error } = await supabase
     .from("email_messages")
     .select(
-      "id, from_name, from_email, subject, body_preview, received_at, has_attachments, classification, is_rfq, rfq_id",
+      "id, provider, from_name, from_email, subject, body_preview, received_at, has_attachments, classification, is_rfq, rfq_id",
     )
     .eq("organization_id", organization.id)
+    .in("classification", ["likely_rfq", "possible_rfq"])
     .order("received_at", { ascending: false });
   const emails = (data ?? []) as EmailMessage[];
 
@@ -57,8 +60,8 @@ export default async function EmailIntakePage() {
             Email Intake
           </h1>
           <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-            Log customer emails manually and convert RFQ requests into tracked
-            RFQs without Microsoft Graph or OAuth.
+            Review RFQ-related emails from manual, IMAP, and Microsoft 365
+            intake, then convert requests into tracked RFQs.
           </p>
         </div>
         <Link
@@ -83,6 +86,7 @@ export default async function EmailIntakePage() {
                 <th className="px-5 py-3">Sender</th>
                 <th className="px-5 py-3">Subject</th>
                 <th className="px-5 py-3">Classification</th>
+                <th className="px-5 py-3">Source</th>
                 <th className="px-5 py-3">Received</th>
                 <th className="px-5 py-3">Attachments</th>
                 <th className="px-5 py-3 text-right">Action</th>
@@ -115,24 +119,34 @@ export default async function EmailIntakePage() {
                       {email.rfq_id ? "RFQ created" : labelize(email.classification)}
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-slate-600">
+                      {labelize(email.provider)}
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                       {formatDate(email.received_at)}
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                       {email.has_attachments ? "Yes" : "No"}
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-right">
-                      <Link
-                        href={`/email-intake/${email.id}`}
-                        className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
-                      >
-                        View
-                      </Link>
+                      <div className="flex justify-end gap-2">
+                        <Link
+                          href={`/email-intake/${email.id}`}
+                          className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                        >
+                          View
+                        </Link>
+                        <DeleteEmailIntakeButton
+                          emailId={email.id}
+                          linkedRfq={Boolean(email.rfq_id)}
+                          redirectTo="list"
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <EmptyState
                       title="No manually logged emails yet"
                       description="Emails logged by your team will appear here for RFQ review."

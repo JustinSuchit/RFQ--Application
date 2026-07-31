@@ -28,7 +28,8 @@ export function Sidebar() {
         <nav className="mt-3 space-y-1">
           {sidebarNavigation.map((item) => {
             const active =
-              pathname === item.href || pathname.startsWith(`${item.href}/`);
+              pathname === item.href ||
+              (item.href !== "/settings" && pathname.startsWith(`${item.href}/`));
 
             return (
               <Link

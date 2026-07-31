@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  AttachmentExtractedItemActions,
+  DownloadMicrosoftAttachmentButton,
+  ExtractAttachmentButton,
+  ImportAcceptedAttachmentItemsButton,
+} from "@/components/email-intake/attachment-ocr-actions";
+import { DeleteRfqButton } from "@/components/rfqs/delete-rfq-button";
 import { StatusControl } from "@/components/rfqs/status-control";
+import { ExtractItemsButton } from "@/components/rfqs/extract-items-button";
 import { requireOrganization } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 
@@ -83,6 +91,41 @@ type ActivityLog = {
   created_at: string;
 };
 
+type LinkedEmail = {
+  id: string;
+  provider: string;
+  subject: string;
+  from_email: string;
+};
+
+type EmailAttachment = {
+  id: string;
+  email_message_id: string;
+  provider_attachment_id: string | null;
+  file_name: string | null;
+  content_type: string | null;
+  size_bytes: number | null;
+  storage_path: string | null;
+  ocr_status: string | null;
+  extracted_text: string | null;
+  extraction_method: string | null;
+  extraction_error: string | null;
+  extracted_at: string | null;
+};
+
+type AttachmentExtractedItem = {
+  id: string;
+  email_message_id: string | null;
+  email_attachment_id: string | null;
+  description: string;
+  quantity: number | null;
+  unit: string | null;
+  notes: string | null;
+  confidence: number | null;
+  status: string;
+  rfq_item_id: string | null;
+};
+
 function firstRelated<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
 }
@@ -112,6 +155,18 @@ function formatCurrency(value: number | null, currency: string) {
     currency,
     maximumFractionDigits: 0,
   }).format(value ?? 0);
+}
+
+function formatBytes(value: number | null) {
+  if (!value) return "Unknown size";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function textPreview(value: string | null) {
+  if (!value) return "";
+  return value.replace(/\s+/g, " ").trim().slice(0, 500);
 }
 
 function Badge({ children }: { children: string }) {
@@ -181,6 +236,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
     supplierQuotesResponse,
     customerQuotesResponse,
     activityResponse,
+    linkedEmailsResponse,
   ] = await Promise.all([
     supabase
       .from("rfq_items")
@@ -211,17 +267,56 @@ export default async function RfqDetailPage({ params }: PageProps) {
       .eq("rfq_id", rfq.id)
       .order("created_at", { ascending: false })
       .limit(10),
+    supabase
+      .from("email_messages")
+      .select("id, provider, subject, from_email")
+      .eq("organization_id", organization.id)
+      .eq("rfq_id", rfq.id)
+      .order("received_at", { ascending: false }),
   ]);
 
   const items = (itemsResponse.data ?? []) as RfqItem[];
   const supplierQuotes = (supplierQuotesResponse.data ?? []) as SupplierQuote[];
   const customerQuotes = (customerQuotesResponse.data ?? []) as CustomerQuote[];
   const activityLogs = (activityResponse.data ?? []) as ActivityLog[];
+  const linkedEmails = (linkedEmailsResponse.data ?? []) as LinkedEmail[];
+  const linkedEmailIds = linkedEmails.map((email) => email.id);
+  const [attachmentsResponse, extractedItemsResponse] =
+    linkedEmailIds.length > 0
+      ? await Promise.all([
+          supabase
+            .from("email_attachments")
+            .select(
+              "id, email_message_id, provider_attachment_id, file_name, content_type, size_bytes, storage_path, ocr_status, extracted_text, extraction_method, extraction_error, extracted_at",
+            )
+            .eq("organization_id", organization.id)
+            .in("email_message_id", linkedEmailIds)
+            .order("created_at", { ascending: true }),
+          supabase
+            .from("attachment_extracted_items")
+            .select(
+              "id, email_message_id, email_attachment_id, description, quantity, unit, notes, confidence, status, rfq_item_id",
+            )
+            .eq("organization_id", organization.id)
+            .in("email_message_id", linkedEmailIds)
+            .order("created_at", { ascending: true }),
+        ])
+      : [
+          { data: [], error: null },
+          { data: [], error: null },
+        ];
+  const attachments = (attachmentsResponse.data ?? []) as EmailAttachment[];
+  const extractedAttachmentItems =
+    (extractedItemsResponse.data ?? []) as AttachmentExtractedItem[];
   const relatedError =
     itemsResponse.error ??
     supplierQuotesResponse.error ??
     customerQuotesResponse.error ??
-    activityResponse.error;
+    activityResponse.error ??
+    linkedEmailsResponse.error ??
+    attachmentsResponse.error ??
+    extractedItemsResponse.error;
+  const canDeleteRfq = ["owner", "admin", "manager"].includes(organization.role);
 
   return (
     <div className="space-y-6">
@@ -258,7 +353,10 @@ export default async function RfqDetailPage({ params }: PageProps) {
             </p>
           </div>
         </div>
-        <StatusControl rfqId={rfq.id} currentStatus={rfq.status} />
+        <div className="flex flex-col gap-3">
+          <StatusControl rfqId={rfq.id} currentStatus={rfq.status} />
+          {canDeleteRfq ? <DeleteRfqButton rfqId={rfq.id} /> : null}
+        </div>
       </div>
 
       {relatedError ? (
@@ -320,9 +418,14 @@ export default async function RfqDetailPage({ params }: PageProps) {
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4">
-          <h2 className="text-lg font-semibold text-slate-950">
-            Requested items
-          </h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-lg font-semibold text-slate-950">
+              Requested items
+            </h2>
+            {items.length === 0 && rfq.notes ? (
+              <ExtractItemsButton rfqId={rfq.id} />
+            ) : null}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -366,6 +469,193 @@ export default async function RfqDetailPage({ params }: PageProps) {
             </tbody>
           </table>
         </div>
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-950">
+            Attachment OCR & Item Extraction
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            Extract readable text from linked email attachments, review detected
+            items, then import accepted rows into this RFQ.
+          </p>
+        </div>
+        {linkedEmails.length === 0 || attachments.length === 0 ? (
+          <div className="px-5 py-6 text-sm text-slate-600">
+            No email attachments linked to this RFQ.
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-200">
+            {linkedEmails.map((email) => {
+              const emailAttachments = attachments.filter(
+                (attachment) => attachment.email_message_id === email.id,
+              );
+              if (emailAttachments.length === 0) return null;
+
+              return (
+                <div key={email.id} className="space-y-5 px-5 py-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">
+                        Linked email
+                      </p>
+                      <Link
+                        href={`/email-intake/${email.id}`}
+                        className="mt-1 block font-semibold text-teal-700 hover:text-teal-800"
+                      >
+                        {email.subject}
+                      </Link>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {email.from_email} · {labelize(email.provider)}
+                      </p>
+                    </div>
+                    <ImportAcceptedAttachmentItemsButton
+                      emailId={email.id}
+                      rfqId={rfq.id}
+                      hasRfq={true}
+                    />
+                  </div>
+
+                  {emailAttachments.map((attachment) => {
+                    const itemsForAttachment = extractedAttachmentItems.filter(
+                      (item) => item.email_attachment_id === attachment.id,
+                    );
+                    const method = attachment.extraction_method || "Not extracted";
+
+                    return (
+                      <div
+                        key={attachment.id}
+                        className="space-y-4 rounded-md border border-slate-200 p-4"
+                      >
+                        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
+                          <div>
+                            <h3 className="font-semibold text-slate-950">
+                              {attachment.file_name || "Attachment"}
+                            </h3>
+                            <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+                              <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                {attachment.content_type || "Unknown type"}
+                              </span>
+                              <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                {formatBytes(attachment.size_bytes)}
+                              </span>
+                              <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                OCR: {attachment.ocr_status || "pending"}
+                              </span>
+                              <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                Method: {labelize(method)}
+                              </span>
+                            </div>
+                            {attachment.extraction_method === "image_ocr" ? (
+                              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                                Image and handwriting OCR may be inaccurate. Review detected items before importing.
+                              </p>
+                            ) : null}
+                            {attachment.extraction_error ? (
+                              <p className="mt-3 text-sm font-medium text-rose-600">
+                                {attachment.extraction_error}
+                              </p>
+                            ) : null}
+                            {attachment.extraction_error?.includes("No readable PDF text found") ? (
+                              <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
+                                This PDF may be scanned or image-based. Upload an image version or use scanned PDF OCR when available.
+                              </p>
+                            ) : null}
+                          </div>
+                          <div className="space-y-3">
+                            {!attachment.storage_path &&
+                            email.provider === "microsoft_graph" &&
+                            attachment.provider_attachment_id ? (
+                              <>
+                                <p className="max-w-sm text-sm font-medium text-amber-700">
+                                  Attachment metadata is available, but the file content has not been downloaded yet.
+                                </p>
+                                <DownloadMicrosoftAttachmentButton
+                                  attachmentId={attachment.id}
+                                />
+                              </>
+                            ) : null}
+                            {attachment.storage_path ? (
+                              <ExtractAttachmentButton attachmentId={attachment.id} />
+                            ) : null}
+                          </div>
+                        </div>
+
+                        {attachment.extracted_text ? (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Extracted text preview
+                            </p>
+                            <p className="mt-2 text-sm leading-6 text-slate-700">
+                              {textPreview(attachment.extracted_text)}
+                            </p>
+                          </div>
+                        ) : null}
+
+                        {itemsForAttachment.length ? (
+                          <div className="space-y-2">
+                            <p className="text-xs font-semibold uppercase text-slate-500">
+                              Detected RFQ items
+                            </p>
+                            <div className="overflow-x-auto rounded-md border border-slate-200">
+                              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                                <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
+                                  <tr>
+                                    <th className="px-4 py-3">Description</th>
+                                    <th className="px-4 py-3">Quantity</th>
+                                    <th className="px-4 py-3">Unit</th>
+                                    <th className="px-4 py-3">Confidence</th>
+                                    <th className="px-4 py-3">Status</th>
+                                    <th className="px-4 py-3">Review</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                  {itemsForAttachment.map((item) => (
+                                    <tr key={item.id}>
+                                      <td className="min-w-72 px-4 py-3 font-medium text-slate-950">
+                                        {item.description}
+                                      </td>
+                                      <td className="px-4 py-3 text-slate-600">
+                                        {item.quantity ?? "Not set"}
+                                      </td>
+                                      <td className="px-4 py-3 text-slate-600">
+                                        {item.unit ?? "Not set"}
+                                      </td>
+                                      <td className="px-4 py-3 text-slate-600">
+                                        {item.confidence === null
+                                          ? "Not set"
+                                          : `${Math.round(item.confidence * 100)}%`}
+                                      </td>
+                                      <td className="px-4 py-3 text-slate-600">
+                                        {labelize(item.status)}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <AttachmentExtractedItemActions
+                                          emailId={email.id}
+                                          itemId={item.id}
+                                          status={item.status}
+                                        />
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-slate-600">
+                            Text was extracted, but no RFQ item rows were detected.
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Card>
 
       <div className="grid gap-6 xl:grid-cols-2">

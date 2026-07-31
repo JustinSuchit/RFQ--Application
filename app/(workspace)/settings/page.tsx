@@ -1,6 +1,7 @@
 import { Card } from "@/components/ui/card";
 import {
   SettingsManager,
+  type EmailConnectionSummary,
   type EmailTemplate,
   type IntegrationSetting,
   type OrganizationMember,
@@ -34,6 +35,7 @@ export default async function SettingsPage() {
     emailTemplatesResponse,
     membersResponse,
     integrationsResponse,
+    microsoftConnectionResponse,
   ] = await Promise.all([
     supabase
       .from("organizations")
@@ -70,6 +72,13 @@ export default async function SettingsPage() {
       .from("integration_settings")
       .select("id, provider, status")
       .eq("organization_id", currentOrganization.id),
+    supabase
+      .from("email_connections")
+      .select("id, provider, mailbox_email, is_active")
+      .eq("organization_id", currentOrganization.id)
+      .eq("provider", "microsoft_graph")
+      .eq("is_active", true)
+      .maybeSingle(),
   ]);
 
   const firstError =
@@ -78,7 +87,8 @@ export default async function SettingsPage() {
     approvalRulesResponse.error ??
     emailTemplatesResponse.error ??
     membersResponse.error ??
-    integrationsResponse.error;
+    integrationsResponse.error ??
+    microsoftConnectionResponse.error;
 
   if (firstError || !organizationResponse.data) {
     return (
@@ -115,8 +125,11 @@ export default async function SettingsPage() {
           integrations={
             (integrationsResponse.data ?? []) as IntegrationSetting[]
           }
+          microsoftConnection={
+            (microsoftConnectionResponse.data ?? null) as EmailConnectionSummary | null
+          }
           canManage={adminRoles.has(currentOrganization.role)}
-          hasEmailSettings={false}
+          hasEmailSettings={true}
         />
       </Card>
     </div>

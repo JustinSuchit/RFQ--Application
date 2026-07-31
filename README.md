@@ -1,5 +1,12 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Supabase Storage
+
+Create a private Supabase Storage bucket named `rfq-email-attachments`.
+Attachment files are stored under:
+
+`organizations/{organization_id}/emails/{email_message_id}/{attachment_id}-{file_name}`
+
 ## Getting Started
 
 First, run the development server:
