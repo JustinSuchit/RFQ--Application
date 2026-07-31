@@ -1,48 +1,94 @@
 import { Card } from "@/components/ui/card";
 import {
-  ApprovalRulesManager,
-  type ApprovalRule,
-} from "@/components/settings/approval-rules-manager";
+  SettingsManager,
+  type EmailTemplate,
+  type IntegrationSetting,
+  type OrganizationMember,
+} from "@/components/settings/settings-manager";
+import { type ApprovalRule } from "@/components/settings/approval-rules-manager";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
-import { settingsSections } from "@/lib/data/workspace-config";
 import { createClient } from "@/lib/supabase/server";
-
-const sectionDescriptions: Record<string, string> = {
-  "Organization profile":
-    "Tenant name, business details, default contacts, and operating regions.",
-  Branding:
-    "Logo, accent color, customer-facing labels, and document presentation.",
-  "Currency and tax":
-    "Default currency, tax handling, quote precision, and regional formats.",
-  "RFQ numbering":
-    "RFQ prefixes, annual sequences, quote numbers, and document identifiers.",
-  "Approval rules":
-    "Thresholds, approver groups, escalation timing, and routing policies.",
-  "Email templates":
-    "Supplier invitations, deadline reminders, clarifications, and awards.",
-  "User roles":
-    "Buyer, manager, approver, supplier-facing, and administrator permissions.",
-  Integrations:
-    "Placeholders for ERP, CRM, email, document storage, and notification tools.",
-};
 
 const adminRoles = new Set(["owner", "admin"]);
 
+const defaultSettings = {
+  rfq_prefix: "RFQ",
+  quote_prefix: "QT",
+  rfq_number_padding: 6,
+  quote_number_padding: 6,
+  rfq_number_reset: "yearly",
+  quote_number_reset: "yearly",
+  default_quote_validity_days: 30,
+  default_markup_percentage: 25,
+};
+
 export default async function SettingsPage() {
   await requireUser();
-  const organization = await requireOrganization();
+  const currentOrganization = await requireOrganization();
   const supabase = await createClient();
 
-  const { data: approvalRulesData, error: approvalRulesError } = await supabase
-    .from("approval_rules")
-    .select(
-      "id, name, rule_type, condition_field, condition_operator, condition_value, approver_role, is_active, created_at",
-    )
-    .eq("organization_id", organization.id)
-    .order("created_at", { ascending: false });
+  const [
+    organizationResponse,
+    settingsResponse,
+    approvalRulesResponse,
+    emailTemplatesResponse,
+    membersResponse,
+    integrationsResponse,
+  ] = await Promise.all([
+    supabase
+      .from("organizations")
+      .select(
+        "id, name, slug, industry, country, currency, timezone, tax_rate, logo_url, brand_color, quote_header_text, quote_footer_text",
+      )
+      .eq("id", currentOrganization.id)
+      .single(),
+    supabase
+      .from("organization_settings")
+      .select(
+        "rfq_prefix, quote_prefix, rfq_number_padding, quote_number_padding, rfq_number_reset, quote_number_reset, default_quote_validity_days, default_markup_percentage",
+      )
+      .eq("organization_id", currentOrganization.id)
+      .maybeSingle(),
+    supabase
+      .from("approval_rules")
+      .select(
+        "id, name, rule_type, condition_field, condition_operator, condition_value, approver_role, is_active, created_at",
+      )
+      .eq("organization_id", currentOrganization.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("email_templates")
+      .select("id, template_type, name, subject, body, is_active, created_at")
+      .eq("organization_id", currentOrganization.id)
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("organization_members")
+      .select("id, user_id, role, status, created_at, joined_at")
+      .eq("organization_id", currentOrganization.id)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("integration_settings")
+      .select("id, provider, status")
+      .eq("organization_id", currentOrganization.id),
+  ]);
 
-  const approvalRules = (approvalRulesData ?? []) as ApprovalRule[];
-  const canManageApprovalRules = adminRoles.has(organization.role);
+  const firstError =
+    organizationResponse.error ??
+    settingsResponse.error ??
+    approvalRulesResponse.error ??
+    emailTemplatesResponse.error ??
+    membersResponse.error ??
+    integrationsResponse.error;
+
+  if (firstError || !organizationResponse.data) {
+    return (
+      <Card className="p-6">
+        <p className="text-sm font-medium text-rose-700">
+          {firstError?.message ?? "Unable to load organization settings."}
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -59,54 +105,19 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {settingsSections.map((section) => (
-          <Card key={section} className="p-5">
-            <div className="flex h-full flex-col justify-between gap-8">
-              <div>
-                <h2 className="text-base font-semibold text-slate-950">
-                  {section}
-                </h2>
-                <p className="mt-3 text-sm leading-6 text-slate-600">
-                  {sectionDescriptions[section]}
-                </p>
-              </div>
-              <span className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-500 shadow-sm">
-                {section === "Approval rules" ? "Available" : "Coming soon"}
-              </span>
-            </div>
-          </Card>
-        ))}
-      </div>
-
       <Card className="p-6">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-teal-700">
-              Workflow controls
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">
-              Approval Rules
-            </h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-600">
-              Require review before high-value customer quotes can move forward.
-              Rules apply only within the current organization workspace.
-            </p>
-          </div>
-        </div>
-
-        {approvalRulesError ? (
-          <div className="mt-5 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {approvalRulesError.message}
-          </div>
-        ) : null}
-
-        <div className="mt-6">
-          <ApprovalRulesManager
-            rules={approvalRules}
-            canManage={canManageApprovalRules}
-          />
-        </div>
+        <SettingsManager
+          organization={organizationResponse.data}
+          settings={{ ...defaultSettings, ...(settingsResponse.data ?? {}) }}
+          approvalRules={(approvalRulesResponse.data ?? []) as ApprovalRule[]}
+          emailTemplates={(emailTemplatesResponse.data ?? []) as EmailTemplate[]}
+          members={(membersResponse.data ?? []) as OrganizationMember[]}
+          integrations={
+            (integrationsResponse.data ?? []) as IntegrationSetting[]
+          }
+          canManage={adminRoles.has(currentOrganization.role)}
+          hasEmailSettings={false}
+        />
       </Card>
     </div>
   );

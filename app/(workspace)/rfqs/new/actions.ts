@@ -26,6 +26,22 @@ function currentYearRange() {
   };
 }
 
+async function getRfqNumberSettings(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  organizationId: string,
+) {
+  const { data } = await supabase
+    .from("organization_settings")
+    .select("rfq_prefix, rfq_number_padding")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  return {
+    prefix: String(data?.rfq_prefix || "RFQ"),
+    padding: Number(data?.rfq_number_padding || 6),
+  };
+}
+
 export async function createRfqAction(
   _previousState: CreateRfqState,
   formData: FormData,
@@ -120,7 +136,10 @@ export async function createRfqAction(
     customerId = customer.id;
   }
 
-  const { year, start, end } = currentYearRange();
+  const [{ prefix, padding }, { year, start, end }] = [
+    await getRfqNumberSettings(supabase, organization.id),
+    currentYearRange(),
+  ];
   const { count, error: countError } = await supabase
     .from("rfqs")
     .select("id", { count: "exact", head: true })
@@ -132,7 +151,10 @@ export async function createRfqAction(
     return { error: countError.message };
   }
 
-  const rfqNumber = `RFQ-${year}-${String((count ?? 0) + 1).padStart(6, "0")}`;
+  const rfqNumber = `${prefix}-${year}-${String((count ?? 0) + 1).padStart(
+    padding,
+    "0",
+  )}`;
 
   const { data: rfq, error: rfqInsertError } = await supabase
     .from("rfqs")

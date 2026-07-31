@@ -28,6 +28,7 @@ type CustomerQuoteFormProps = {
   currency: string;
   taxRate: number;
   defaultValidUntil: string;
+  defaultMarkupPercentage: number;
 };
 
 const inputClass =
@@ -54,12 +55,13 @@ export function CustomerQuoteForm({
   currency,
   taxRate,
   defaultValidUntil,
+  defaultMarkupPercentage,
 }: CustomerQuoteFormProps) {
   const [state, formAction, pending] = useActionState(
     createCustomerQuoteAction,
     initialState,
   );
-  const [markupPercentage, setMarkupPercentage] = useState(25);
+  const [markupPercentage, setMarkupPercentage] = useState(defaultMarkupPercentage);
   const [discount, setDiscount] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
   const [manualTax, setManualTax] = useState<number | null>(null);
@@ -84,7 +86,7 @@ export function CustomerQuoteForm({
       }, 0),
     [items, markupPercentage, selectedOptions],
   );
-  const tax = manualTax ?? subtotal * (taxRate / 100);
+  const tax = manualTax ?? subtotal * taxRate;
   const total = Math.max(subtotal - discount + deliveryFee + tax, 0);
 
   return (

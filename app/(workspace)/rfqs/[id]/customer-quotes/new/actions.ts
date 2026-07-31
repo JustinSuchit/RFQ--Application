@@ -32,6 +32,22 @@ function currentYearRange() {
   };
 }
 
+async function getQuoteNumberSettings(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  organizationId: string,
+) {
+  const { data } = await supabase
+    .from("organization_settings")
+    .select("quote_prefix, quote_number_padding")
+    .eq("organization_id", organizationId)
+    .maybeSingle();
+
+  return {
+    prefix: String(data?.quote_prefix || "QT"),
+    padding: Number(data?.quote_number_padding || 6),
+  };
+}
+
 type SupplierQuoteItemRow = {
   id: string;
   rfq_item_id: string | null;
@@ -171,7 +187,10 @@ export async function createCustomerQuoteAction(
     return { error: "Quote total must be greater than zero." };
   }
 
-  const { year, start, end } = currentYearRange();
+  const [{ prefix, padding }, { year, start, end }] = [
+    await getQuoteNumberSettings(supabase, organization.id),
+    currentYearRange(),
+  ];
   const { count, error: countError } = await supabase
     .from("customer_quotes")
     .select("id", { count: "exact", head: true })
@@ -183,7 +202,10 @@ export async function createCustomerQuoteAction(
     return { error: countError.message };
   }
 
-  const quoteNumber = `QT-${year}-${String((count ?? 0) + 1).padStart(6, "0")}`;
+  const quoteNumber = `${prefix}-${year}-${String((count ?? 0) + 1).padStart(
+    padding,
+    "0",
+  )}`;
   const { data: activeRules, error: approvalRulesError } = await supabase
     .from("approval_rules")
     .select(

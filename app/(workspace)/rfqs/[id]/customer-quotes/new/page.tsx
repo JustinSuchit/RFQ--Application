@@ -58,9 +58,9 @@ function firstRelated<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
 }
 
-function defaultValidUntil() {
+function defaultValidUntil(days: number) {
   const date = new Date();
-  date.setDate(date.getDate() + 30);
+  date.setDate(date.getDate() + days);
   return date.toISOString().slice(0, 10);
 }
 
@@ -117,7 +117,12 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
 
   const currentRfq = rfq as Rfq;
   const customer = firstRelated(currentRfq.customers);
-  const [itemsResponse, supplierQuotesResponse, supplierQuoteItemsResponse] =
+  const [
+    itemsResponse,
+    supplierQuotesResponse,
+    supplierQuoteItemsResponse,
+    settingsResponse,
+  ] =
     await Promise.all([
       supabase
         .from("rfq_items")
@@ -137,12 +142,18 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
           "id, supplier_quote_id, rfq_item_id, unit_cost, supplier_quotes(id, quote_reference, currency, suppliers(supplier_name))",
         )
         .eq("organization_id", organization.id),
+      supabase
+        .from("organization_settings")
+        .select("default_quote_validity_days, default_markup_percentage")
+        .eq("organization_id", organization.id)
+        .maybeSingle(),
     ]);
 
   const dataError =
     itemsResponse.error ??
     supplierQuotesResponse.error ??
-    supplierQuoteItemsResponse.error;
+    supplierQuoteItemsResponse.error ??
+    settingsResponse.error;
   const rfqItems = (itemsResponse.data ?? []) as RfqItem[];
   const supplierQuoteItems = (
     supplierQuoteItemsResponse.data ?? []
@@ -171,6 +182,12 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
   }));
   const hasSupplierQuotes = (supplierQuotesResponse.data?.length ?? 0) > 0;
   const hasPriceOptions = quoteItems.every((item) => item.options.length > 0);
+  const defaultValidityDays = Number(
+    settingsResponse.data?.default_quote_validity_days ?? 30,
+  );
+  const defaultMarkupPercentage = Number(
+    settingsResponse.data?.default_markup_percentage ?? 25,
+  );
 
   return (
     <div className="space-y-6">
@@ -229,7 +246,8 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
             items={quoteItems}
             currency={organization.currency || "TTD"}
             taxRate={Number(organization.tax_rate ?? 0)}
-            defaultValidUntil={defaultValidUntil()}
+            defaultValidUntil={defaultValidUntil(defaultValidityDays)}
+            defaultMarkupPercentage={defaultMarkupPercentage}
           />
         </Card>
       )}
