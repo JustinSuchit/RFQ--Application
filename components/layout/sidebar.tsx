@@ -2,53 +2,80 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import {
+  BarChart3,
+  BellCheck,
+  Building2,
+  CheckCircle2,
+  FileText,
+  Inbox,
+  Mail,
+  Settings,
+  ShieldCheck,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { sidebarNavigation } from "@/lib/data/navigation";
+
+const navigationIcons: Record<string, LucideIcon> = {
+  Dashboard: BarChart3,
+  "Review Queue": BellCheck,
+  RFQs: FileText,
+  "Email Intake": Inbox,
+  Customers: Building2,
+  Suppliers: Users,
+  Quotes: Mail,
+  Approvals: CheckCircle2,
+  Integrations: ShieldCheck,
+  Settings,
+};
 
 export function Sidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-72 shrink-0 border-r border-slate-200 bg-white lg:flex lg:flex-col">
-      <div className="border-b border-slate-200 px-6 py-5">
+    <aside className="hidden w-64 shrink-0 border-r border-[#dfe4ea] bg-white lg:flex lg:flex-col">
+      <div className="border-b border-[#dfe4ea] px-5 py-4">
         <Link href="/" className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-teal-600 text-sm font-bold text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-teal-600 text-[11px] font-bold text-white">
             RFQ
           </div>
           <div>
             <p className="text-sm font-semibold text-slate-950">ProcureFlow</p>
-            <p className="text-xs text-slate-500">RFQ SaaS platform</p>
+            <p className="text-xs text-slate-500">Procurement workspace</p>
           </div>
         </Link>
       </div>
 
-      <div className="flex-1 px-4 py-5">
-        <p className="px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+      <div className="flex-1 px-3 py-4">
+        <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
           Workspace
         </p>
-        <nav className="mt-3 space-y-1">
+        <nav className="mt-2 space-y-0.5">
           {sidebarNavigation.map((item) => {
             const active =
               pathname === item.href ||
               (item.href !== "/settings" && pathname.startsWith(`${item.href}/`));
+            const Icon = navigationIcons[item.label] ?? FileText;
 
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition ${
+                className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-teal-100 ${
                   active
                     ? "bg-teal-50 text-teal-800"
                     : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
                 }`}
               >
                 <span
-                  className={`flex h-7 w-7 items-center justify-center rounded-md text-xs font-semibold ${
+                  className={`flex h-6 w-6 items-center justify-center rounded-sm ${
                     active
-                      ? "bg-teal-600 text-white"
-                      : "bg-slate-100 text-slate-500"
+                      ? "text-teal-700"
+                      : "text-slate-400"
                   }`}
                 >
-                  {item.symbol}
+                  <Icon className="h-4 w-4" aria-hidden="true" />
                 </span>
                 {item.label}
               </Link>
@@ -56,8 +83,8 @@ export function Sidebar() {
           })}
         </nav>
       </div>
-      <div className="border-t border-slate-200 p-4">
-        <div className="rounded-lg bg-slate-50 p-4">
+      <div className="border-t border-[#dfe4ea] p-3">
+        <div className="rounded-md bg-slate-50 p-3">
           <p className="text-sm font-semibold text-slate-950">
             Current workspace
           </p>
