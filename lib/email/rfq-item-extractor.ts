@@ -53,6 +53,99 @@ const knownUnits = new Set([
   "metres",
 ]);
 
+const verticalTableHeaderPatterns = [
+  /^item\s+description$/i,
+  /^description$/i,
+  /^item$/i,
+  /^product\s+description$/i,
+  /^unit\s+of\s+measure$/i,
+  /^unit$/i,
+  /^u\/?o\/?m$/i,
+  /^uom$/i,
+  /^qty$/i,
+  /^quantity$/i,
+];
+
+const verticalTableCombinedHeaderPatterns = [
+  /\bitem\s+description\s+unit\s+of\s+measure\s+quantity\b/i,
+  /\bdescription\s+unit\s+qty\b/i,
+  /\bitem\s+u\/?o\/?m\s+quantity\b/i,
+  /\bitem\s+uom\s+quantity\b/i,
+  /\bproduct\s+description\s+unit\s+qty\b/i,
+];
+
+const flattenedDescriptionUnitQuantityHeaderPattern =
+  /\bitem\s+description\s+unit\s+of\s+measure\s+quantity\b/i;
+
+const forwardedSectionPatterns = [
+  /\b-{2,}\s*original\s+message\s*-{2,}\b/gi,
+  /\bbegin\s+forwarded\s+message\b/gi,
+  /\bfrom\s*:\s*/gi,
+  /\bsent\s*:\s*/gi,
+  /\bsubject\s*:\s*/gi,
+];
+
+const preferredForwardedSubjectPattern =
+  /\bsubject\s*:\s*(?:urgent\s+)?request\s+for\s+quote\b/i;
+
+const supplierReplyPatterns = [
+  /\bplease\s+see\s+our\s+quotation\s+attached\b/i,
+  /\bspecification\s+sheets?\s+can\s+be\s+viewed\b/i,
+  /\bquotation\s+attached\b/i,
+  /\bmeccaindustries\.com\b/i,
+];
+
+const verticalTableStopPatterns = [
+  /^regards\b/i,
+  /^kind regards\b/i,
+  /^thank you\b/i,
+  /^thanks\b/i,
+  /^prepared by\b/i,
+  /^phone\b/i,
+  /^mobile\b/i,
+  /^tel\b/i,
+  /^email\b/i,
+  /^website\b/i,
+  /^address\b/i,
+  /^linkedin\b/i,
+  /^facebook\b/i,
+  /^instagram\b/i,
+  /^specification sheets?\b/i,
+  /^attachments?\b/i,
+  /^disclaimer\b/i,
+  /^confidentiality\b/i,
+];
+
+const flattenedTableStopPatterns = [
+  /\bthank\s+you\b/i,
+  /\bthanks\b/i,
+  /\bregards\b/i,
+  /\bbest\s+regards\b/i,
+  /\bprocurement\s+manager\b/i,
+  /\bmobile\s*:/i,
+  /\boffice\s*:/i,
+  /\bphone\s*:/i,
+  /\bemail\s*:/i,
+  /\baddress\s*:/i,
+  /\bdisclaimer\b/i,
+];
+
+export type FlattenedRfqTableRejectedCandidate = {
+  description: string;
+  unit: string | null;
+  quantity: number | null;
+  reason: string;
+};
+
+export type FlattenedRfqTableParseResult = {
+  items: ExtractedRfqItem[];
+  tableHeaderDetected: boolean;
+  unitQuantityPairCount: number;
+  candidateCount: number;
+  acceptedCount: number;
+  rejected: FlattenedRfqTableRejectedCandidate[];
+};
+
 const cutoffPatterns = [
   /\bquotation deadline\b/i,
   /\bdeadline\b/i,
@@ -65,6 +158,8 @@ const cutoffPatterns = [
   /\bbsc information technology\b/i,
   /\bconfidentiality\b/i,
   /\bsent from my iphone\b/i,
+  /\bterms\s+and\s+conditions\b/i,
+  /\bquotation\s+specific\s+terms\b/i,
 ];
 
 const ignoredLinePatterns = [
@@ -81,6 +176,8 @@ const ignoredLinePatterns = [
   /^subject\b/i,
   /^date\b/i,
   /^page\b/i,
+  /\bpage\s+\d+\s+of\s+\d+\b/i,
+  /^continued\b/i,
   /^invoice\b/i,
   /\bdeadline\b/i,
   /\bquotation deadline\b/i,
@@ -94,7 +191,16 @@ const ignoredLinePatterns = [
   /^company\b/i,
   /^tax\b/i,
   /^vat\b/i,
+  /\bvat\s+reg\b/i,
+  /\bquote\s*no\.?\b/i,
+  /^customer\b/i,
   /^payment terms\b/i,
+  /^expiration date\b/i,
+  /^prepared by\b/i,
+  /^subtotal\b/i,
+  /^sales tax\b/i,
+  /^total\b/i,
+  /^terms and conditions\b/i,
   /^regards\b/i,
   /^thanks\b/i,
   /^thank you\b/i,
@@ -108,6 +214,8 @@ const ignoredLinePatterns = [
 const ignoredDescriptionPatterns = [
   /^(deadline|delivery|address|phone|email)$/i,
   /\bquote\s*no\b/i,
+  /\bpage\s+\d+\s+of\s+\d+\b/i,
+  /^continued\b/i,
   /\bquotation\s+date\b/i,
   /\bquotation\b/i,
   /\bvat\s+reg\b/i,
@@ -158,6 +266,27 @@ const quoteTableStopPatterns = [
   /\bvat\s+reg\b/i,
   /\bpayment\s+terms\b/i,
   /\bexpiration\s+date\b/i,
+];
+
+const repeatedPageNoisePatterns = [
+  /\bpage\s+\d+\s+of\s+\d+\b/i,
+  /^continued\b/i,
+  /\bcontinued\b/i,
+  /\bsubtotal\b/i,
+  /\bsales\s+tax\b/i,
+  /\btotal\b/i,
+  /\bterms\s+and\s+conditions\b/i,
+  /\bprepared\s+by\b/i,
+  /\bvat\s+reg\b/i,
+  /\bquote\s*no\.?\b/i,
+  /^customer\b/i,
+  /\bpayment\s+terms\b/i,
+  /\bexpiration\s+date\b/i,
+];
+
+const finalTableSectionPatterns = [
+  /\bterms\s+and\s+conditions\b/i,
+  /\bquotation\s+specific\s+terms\b/i,
 ];
 
 const deliveryStatusPattern =
@@ -220,6 +349,377 @@ function compactQuoteText(value: string) {
     .replace(/\s+/g, " ")
     .replace(/([A-Z0-9-])(?=EX\s+STOCK\b)/gi, "$1 ")
     .trim();
+}
+
+function normalizedLines(value: string) {
+  return normalizeText(value)
+    .split(/\n+/)
+    .map((line) => line.replace(/[ \t]+/g, " ").trim())
+    .filter(Boolean);
+}
+
+function normalizeUnit(unit: string | null | undefined) {
+  const normalized = String(unit ?? "")
+    .replace(/[^\w/.-]/g, "")
+    .trim()
+    .toLowerCase();
+
+  if (!normalized) return null;
+  if (["ea", "each", "nos"].includes(normalized)) return "each";
+  if (["pc", "pcs", "piece", "pieces"].includes(normalized)) return "pcs";
+  if (["pair", "pairs"].includes(normalized)) return "pairs";
+  if (["m", "mts", "meter", "meters", "metre", "metres"].includes(normalized)) {
+    return "metres";
+  }
+  if (["box", "boxes"].includes(normalized)) return "boxes";
+  if (["bag", "bags"].includes(normalized)) return "bags";
+  if (["roll", "rolls"].includes(normalized)) return "rolls";
+  if (["set", "sets"].includes(normalized)) return "sets";
+  if (["length", "lengths"].includes(normalized)) return "lengths";
+
+  return normalized;
+}
+
+function flattenedKnownUnitPattern() {
+  return Array.from(knownUnits)
+    .sort((left, right) => right.length - left.length)
+    .map((unit) => unit.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+}
+
+function forwardedMarkers(text: string) {
+  const markers: number[] = [];
+
+  for (const pattern of forwardedSectionPatterns) {
+    pattern.lastIndex = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = pattern.exec(text)) !== null) {
+      markers.push(match.index);
+    }
+  }
+
+  return markers.sort((left, right) => left - right);
+}
+
+export function selectForwardedRfqSection(text: string): {
+  text: string;
+  forwardedSectionDetected: boolean;
+} {
+  const normalized = normalizeText(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return { text: "", forwardedSectionDetected: false };
+  }
+
+  const headerMatch = normalized.match(flattenedDescriptionUnitQuantityHeaderPattern);
+  const preferredSubject = normalized.match(preferredForwardedSubjectPattern);
+  const markers = forwardedMarkers(normalized);
+  const hasSupplierReplyBeforeForward =
+    markers.length > 0 &&
+    supplierReplyPatterns.some((pattern) => pattern.test(normalized.slice(0, markers[0])));
+
+  if (preferredSubject?.index !== undefined) {
+    return {
+      text: normalized.slice(preferredSubject.index).trim(),
+      forwardedSectionDetected: true,
+    };
+  }
+
+  if (headerMatch?.index !== undefined) {
+    const headerIndex = headerMatch.index;
+    const previousMarker = markers.filter((index) => index <= headerIndex).at(-1);
+    if (previousMarker !== undefined && hasSupplierReplyBeforeForward) {
+      return {
+        text: normalized.slice(previousMarker).trim(),
+        forwardedSectionDetected: true,
+      };
+    }
+  }
+
+  return {
+    text: normalized,
+    forwardedSectionDetected: markers.length > 0 && hasSupplierReplyBeforeForward,
+  };
+}
+
+function findFlattenedTableBody(text: string) {
+  const compact = normalizeText(text || "").replace(/\s+/g, " ").trim();
+  const headerMatch = compact.match(flattenedDescriptionUnitQuantityHeaderPattern);
+  if (headerMatch?.index === undefined) return null;
+  const headerIndex = headerMatch.index;
+
+  const body = compact.slice(headerIndex + headerMatch[0].length).trim();
+  return body || null;
+}
+
+function stripFlattenedFooterText(value: string) {
+  let next = value.trim();
+
+  for (const pattern of flattenedTableStopPatterns) {
+    const match = next.match(pattern);
+    if (match?.index !== undefined) {
+      next = next.slice(0, match.index).trim();
+    }
+  }
+
+  return next;
+}
+
+function flattenedDescriptionRejectionReason(description: string) {
+  const cleaned = description.trim();
+
+  if (cleaned.length < 2) return "description_too_short";
+  if (isVerticalTableHeaderLine(cleaned)) return "header_text";
+  if (isVerticalTableStopLine(cleaned)) return "footer_text";
+  if (descriptionIsIgnored(cleaned)) return "ignored_contact_or_footer_text";
+  if (/^(?:item\s+description|unit\s+of\s+measure|quantity)$/i.test(cleaned)) return "header_text";
+  if (/@|www\.|https?:\/\//i.test(cleaned)) return "contact_or_url_text";
+  if (/^\d+(?:\.\d+)?$/.test(cleaned)) return "numeric_description";
+  if (knownUnits.has(cleaned.toLowerCase())) return "unit_only_description";
+
+  return null;
+}
+
+export function parseFlattenedDescriptionUnitQuantityTableDetailed(
+  text: string,
+): FlattenedRfqTableParseResult {
+  const body = findFlattenedTableBody(text);
+  if (!body) {
+    return {
+      items: [],
+      tableHeaderDetected: hasFlattenedDescriptionUnitQuantityTableHeader(text),
+      unitQuantityPairCount: 0,
+      candidateCount: 0,
+      acceptedCount: 0,
+      rejected: [],
+    };
+  }
+
+  const unitPattern = flattenedKnownUnitPattern();
+  const recordBoundaryPattern = new RegExp(
+    `(^|\\s)(${unitPattern})\\s+(\\d+(?:\\.\\d+)?)(?=\\s|$|[A-Z][a-z])`,
+    "gi",
+  );
+  const matches = Array.from(body.matchAll(recordBoundaryPattern));
+  const items: ExtractedRfqItem[] = [];
+  const rejected: FlattenedRfqTableRejectedCandidate[] = [];
+  const seen = new Set<string>();
+  let descriptionStart = 0;
+
+  for (const match of matches) {
+    const matchIndex = match.index ?? 0;
+    const leadingDelimiter = match[1] ?? "";
+    const unitStart = matchIndex + leadingDelimiter.length;
+    const description = cleanupDescription(
+      stripFlattenedFooterText(body.slice(descriptionStart, unitStart)),
+    );
+    const rawUnit = match[2];
+    const quantity = Number(String(match[3]).replace(/,/g, ""));
+
+    descriptionStart = matchIndex + match[0].length;
+
+    const unit = normalizeUnit(rawUnit);
+    const rejectionReason =
+      !unit
+        ? "unknown_unit"
+        : !Number.isFinite(quantity) || quantity <= 0 || quantity > 10000
+          ? "invalid_quantity"
+          : flattenedDescriptionRejectionReason(description);
+
+    const key = `${description.toLowerCase()}|${quantity}|${unit ?? ""}`;
+    if (rejectionReason) {
+      rejected.push({
+        description,
+        unit,
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        reason: rejectionReason,
+      });
+      continue;
+    }
+    if (seen.has(key)) {
+      rejected.push({
+        description,
+        unit,
+        quantity,
+        reason: "duplicate",
+      });
+      continue;
+    }
+    seen.add(key);
+
+    items.push({
+      description,
+      quantity,
+      unit,
+      notes: null,
+      confidence: 0.9,
+    });
+  }
+
+  return {
+    items,
+    tableHeaderDetected: true,
+    unitQuantityPairCount: matches.length,
+    candidateCount: matches.length,
+    acceptedCount: items.length,
+    rejected,
+  };
+}
+
+export function parseFlattenedDescriptionUnitQuantityTable(text: string): ExtractedRfqItem[] {
+  return parseFlattenedDescriptionUnitQuantityTableDetailed(text).items;
+}
+
+export function hasFlattenedDescriptionUnitQuantityTableHeader(text: string) {
+  return flattenedDescriptionUnitQuantityHeaderPattern.test(normalizeText(text || "").replace(/\s+/g, " "));
+}
+
+function isKnownUnitLine(value: string) {
+  const unit = value.replace(/[.,;:]+$/g, "").trim().toLowerCase();
+  return knownUnits.has(unit);
+}
+
+function isValidVerticalQuantity(value: string) {
+  const cleaned = value.replace(/,/g, "").trim();
+  if (!/^\d+(?:\.\d+)?$/.test(cleaned)) return false;
+
+  const quantity = Number(cleaned);
+  if (!Number.isFinite(quantity) || quantity <= 0 || quantity > 10000) return false;
+  if (/^\d{4}$/.test(cleaned) && quantity >= 1900 && quantity <= 2100) return false;
+
+  return true;
+}
+
+function isVerticalTableStopLine(value: string) {
+  return verticalTableStopPatterns.some((pattern) => pattern.test(value.trim()));
+}
+
+function isVerticalTableHeaderLine(value: string) {
+  const line = value.replace(/\s+/g, " ").trim();
+  return verticalTableHeaderPatterns.some((pattern) => pattern.test(line));
+}
+
+function findVerticalTableBodyStart(lines: string[]) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const current = lines[index]?.replace(/\s+/g, " ").trim() ?? "";
+    const next = lines[index + 1]?.replace(/\s+/g, " ").trim() ?? "";
+    const third = lines[index + 2]?.replace(/\s+/g, " ").trim() ?? "";
+    const combined = [current, next, third].filter(Boolean).join(" ");
+
+    if (verticalTableCombinedHeaderPatterns.some((pattern) => pattern.test(combined))) {
+      return index + (third ? 3 : next ? 2 : 1);
+    }
+
+    const descHeader = /^(?:item\s+description|description|item|product\s+description)$/i.test(current);
+    const unitHeader = /^(?:unit\s+of\s+measure|unit|u\/?o\/?m|uom)$/i.test(next);
+    const qtyHeader = /^(?:quantity|qty)$/i.test(third);
+
+    if (descHeader && unitHeader && qtyHeader) {
+      return index + 3;
+    }
+  }
+
+  return -1;
+}
+
+function verticalDescriptionIsValid(value: string) {
+  const description = cleanupDescription(value);
+  if (!description) return false;
+  if (isVerticalTableHeaderLine(description)) return false;
+  if (isVerticalTableStopLine(description)) return false;
+  if (descriptionIsIgnored(description)) return false;
+  if (/@|www\.|https?:\/\//i.test(description)) return false;
+  if (/^\d+(?:\.\d+)?$/.test(description)) return false;
+  if (knownUnits.has(description.toLowerCase())) return false;
+
+  return isProductLikeDescription(description);
+}
+
+export function parseVerticalRfqTable(text: string): ExtractedRfqItem[] {
+  const lines = normalizedLines(text);
+  const bodyStart = findVerticalTableBodyStart(lines);
+  if (bodyStart < 0) return [];
+
+  const items: ExtractedRfqItem[] = [];
+  const seen = new Set<string>();
+
+  for (let index = bodyStart; index < lines.length; index += 1) {
+    const descriptionLine = lines[index];
+    if (!descriptionLine) continue;
+    if (isVerticalTableStopLine(descriptionLine)) break;
+    if (isVerticalTableHeaderLine(descriptionLine)) continue;
+
+    const unitLine = lines[index + 1];
+    const quantityLine = lines[index + 2];
+
+    if (!unitLine || !quantityLine) break;
+    if (isVerticalTableStopLine(unitLine) || isVerticalTableStopLine(quantityLine)) break;
+
+    if (!isKnownUnitLine(unitLine) || !isValidVerticalQuantity(quantityLine)) {
+      continue;
+    }
+
+    const description = cleanupDescription(descriptionLine);
+    if (!verticalDescriptionIsValid(description)) {
+      index += 2;
+      continue;
+    }
+
+    const quantity = Number(quantityLine.replace(/,/g, ""));
+    const unit = normalizeUnit(unitLine);
+    const key = `${description.toLowerCase()}|${quantity}|${unit ?? ""}`;
+    if (seen.has(key)) {
+      index += 2;
+      continue;
+    }
+
+    seen.add(key);
+    items.push({
+      description,
+      quantity,
+      unit,
+      notes: null,
+      confidence: 0.9,
+    });
+    index += 2;
+  }
+
+  return items;
+}
+
+export function hasVerticalRfqTableHeader(text: string) {
+  return findVerticalTableBodyStart(normalizedLines(text)) >= 0;
+}
+
+function isQuoteTableHeaderLine(value: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return quoteTableHeaderPatterns.some((pattern) => pattern.test(compact));
+}
+
+function isRepeatedPageNoiseLine(value: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return repeatedPageNoisePatterns.some((pattern) => pattern.test(compact));
+}
+
+function stripRepeatedPageNoise(text: string) {
+  const lines = normalizeText(text)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length <= 1) {
+    return normalizeText(text);
+  }
+
+  const keptLines: string[] = [];
+
+  for (const line of lines) {
+    if (finalTableSectionPatterns.some((pattern) => pattern.test(line))) break;
+    if (isQuoteTableHeaderLine(line) || isRepeatedPageNoiseLine(line)) continue;
+    keptLines.push(line);
+  }
+
+  return keptLines.join("\n");
 }
 
 export function isSupplierQuoteTableText(text: string): boolean {
@@ -324,6 +824,32 @@ function splitIntoSegments(text: string) {
 }
 
 function findQuoteTableBody(text: string) {
+  const lines = normalizeText(text)
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length > 1) {
+    let inTable = false;
+    const tableLines: string[] = [];
+
+    for (const line of lines) {
+      if (isQuoteTableHeaderLine(line)) {
+        inTable = true;
+        continue;
+      }
+
+      if (!inTable) continue;
+      if (finalTableSectionPatterns.some((pattern) => pattern.test(line))) break;
+      if (isRepeatedPageNoiseLine(line)) continue;
+
+      tableLines.push(line);
+    }
+
+    const lineBody = compactQuoteText(tableLines.join("\n"));
+    if (lineBody) return lineBody;
+  }
+
   const compact = compactQuoteText(text);
   let headerEnd = -1;
 
@@ -338,6 +864,11 @@ function findQuoteTableBody(text: string) {
   if (headerEnd < 0) return null;
 
   let tableBody = compact.slice(headerEnd).trim();
+
+  for (const pattern of quoteTableHeaderPatterns) {
+    tableBody = tableBody.replace(new RegExp(pattern.source, "gi"), " ");
+  }
+
   let stopIndex = tableBody.length;
 
   for (const pattern of quoteTableStopPatterns) {
@@ -625,8 +1156,33 @@ function extractWithGlobalQuantityScan(text: string) {
 
 export function extractRfqItemsFromEmailText(text: string): ExtractedRfqItem[] {
   const uniqueItems = new Map<string, ExtractedRfqItem>();
-  const isSupplierQuoteTable = isSupplierQuoteTableText(text || "");
-  const quoteTableItems = extractQuoteTableItems(text || "");
+  const selectedSection = selectForwardedRfqSection(text || "");
+  const sourceText = selectedSection.text || text || "";
+  const cleanedText = stripRepeatedPageNoise(sourceText);
+  const flattenedTableItems = parseFlattenedDescriptionUnitQuantityTable(sourceText);
+
+  if (flattenedTableItems.length > 0) {
+    for (const item of flattenedTableItems) {
+      const key = `${item.quantity}|${item.unit ?? ""}|${item.description.toLowerCase()}`;
+      uniqueItems.set(key, item);
+    }
+
+    return Array.from(uniqueItems.values());
+  }
+
+  const verticalTableItems = parseVerticalRfqTable(sourceText);
+
+  if (verticalTableItems.length > 0) {
+    for (const item of verticalTableItems) {
+      const key = `${item.quantity}|${item.unit ?? ""}|${item.description.toLowerCase()}`;
+      uniqueItems.set(key, item);
+    }
+
+    return Array.from(uniqueItems.values());
+  }
+
+  const isSupplierQuoteTable = isSupplierQuoteTableText(sourceText);
+  const quoteTableItems = extractQuoteTableItems(sourceText);
 
   if (isSupplierQuoteTable) {
     for (const item of quoteTableItems) {
@@ -637,7 +1193,7 @@ export function extractRfqItemsFromEmailText(text: string): ExtractedRfqItem[] {
     return Array.from(uniqueItems.values());
   }
 
-  const globalItems = extractWithGlobalQuantityScan(text || "");
+  const globalItems = extractWithGlobalQuantityScan(cleanedText);
 
   for (const item of globalItems) {
     const key = `${item.quantity}|${item.unit ?? ""}|${item.description.toLowerCase()}`;
@@ -645,7 +1201,7 @@ export function extractRfqItemsFromEmailText(text: string): ExtractedRfqItem[] {
   }
 
   if (globalItems.length === 0) {
-    for (const segment of splitIntoSegments(text || "")) {
+    for (const segment of splitIntoSegments(cleanedText)) {
       const item = parseSegment(segment);
       if (!item) continue;
 

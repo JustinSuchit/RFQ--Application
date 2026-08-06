@@ -5,6 +5,11 @@ import {
   createCustomerQuoteAction,
   type CustomerQuoteState,
 } from "@/app/(workspace)/rfqs/[id]/customer-quotes/new/actions";
+import {
+  calculateQuoteTotals,
+  formatTaxRate,
+  roundCurrency,
+} from "@/lib/quotes/calculations";
 
 type SupplierPriceOption = {
   id: string;
@@ -64,7 +69,7 @@ export function CustomerQuoteForm({
   const [markupPercentage, setMarkupPercentage] = useState(defaultMarkupPercentage);
   const [discount, setDiscount] = useState(0);
   const [deliveryFee, setDeliveryFee] = useState(0);
-  const [manualTax, setManualTax] = useState<number | null>(null);
+  const [quoteTaxRate, setQuoteTaxRate] = useState(taxRate);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>(
     () =>
       Object.fromEntries(
@@ -72,7 +77,6 @@ export function CustomerQuoteForm({
       ),
   );
   const [itemDiscounts, setItemDiscounts] = useState<Record<string, number>>({});
-  const [itemTaxes, setItemTaxes] = useState<Record<string, number>>({});
 
   const subtotal = useMemo(
     () =>
@@ -82,12 +86,18 @@ export function CustomerQuoteForm({
         );
         const unitCost = selectedOption?.unitCost ?? 0;
         const unitPrice = unitCost + unitCost * (markupPercentage / 100);
-        return sum + item.quantity * unitPrice;
+        const lineSubtotal = item.quantity * unitPrice;
+        const itemDiscount = itemDiscounts[item.id] ?? 0;
+        return sum + Math.max(lineSubtotal - itemDiscount, 0);
       }, 0),
-    [items, markupPercentage, selectedOptions],
+    [itemDiscounts, items, markupPercentage, selectedOptions],
   );
-  const tax = manualTax ?? subtotal * taxRate;
-  const total = Math.max(subtotal - discount + deliveryFee + tax, 0);
+  const totals = calculateQuoteTotals({
+    subtotal,
+    discountAmount: discount,
+    taxRate: quoteTaxRate,
+    deliveryCharge: deliveryFee,
+  });
 
   return (
     <form action={formAction} className="space-y-8">
@@ -139,6 +149,21 @@ export function CustomerQuoteForm({
             />
           </label>
           <label className="text-sm font-semibold text-slate-700">
+            Tax rate (%)
+            <input
+              name="taxRate"
+              type="number"
+              min="0"
+              max="100"
+              step="0.01"
+              value={quoteTaxRate}
+              onChange={(event) =>
+                setQuoteTaxRate(Number(event.target.value || 0))
+              }
+              className={inputClass}
+            />
+          </label>
+          <label className="text-sm font-semibold text-slate-700">
             Delivery fee
             <input
               name="deliveryFee"
@@ -149,18 +174,6 @@ export function CustomerQuoteForm({
               onChange={(event) =>
                 setDeliveryFee(Number(event.target.value || 0))
               }
-              className={inputClass}
-            />
-          </label>
-          <label className="text-sm font-semibold text-slate-700">
-            Tax
-            <input
-              name="tax"
-              type="number"
-              min="0"
-              step="0.01"
-              value={tax}
-              onChange={(event) => setManualTax(Number(event.target.value || 0))}
               className={inputClass}
             />
           </label>
@@ -189,7 +202,6 @@ export function CustomerQuoteForm({
                 <th className="px-4 py-3">Markup</th>
                 <th className="px-4 py-3">Unit selling price</th>
                 <th className="px-4 py-3">Discount</th>
-                <th className="px-4 py-3">Tax</th>
                 <th className="px-4 py-3 text-right">Total</th>
               </tr>
             </thead>
@@ -203,8 +215,7 @@ export function CustomerQuoteForm({
                 const unitSellingPrice = unitCost + markupAmount;
                 const lineSubtotal = item.quantity * unitSellingPrice;
                 const itemDiscount = itemDiscounts[item.id] ?? 0;
-                const itemTax = itemTaxes[item.id] ?? 0;
-                const lineTotal = Math.max(lineSubtotal - itemDiscount + itemTax, 0);
+                const lineTotal = roundCurrency(Math.max(lineSubtotal - itemDiscount, 0));
 
                 return (
                   <tr key={item.id}>
@@ -265,21 +276,6 @@ export function CustomerQuoteForm({
                         className={inputClass.replace("mt-2 ", "")}
                       />
                     </td>
-                    <td className="whitespace-nowrap px-4 py-4">
-                      <input
-                        name="itemTax"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        onChange={(event) =>
-                          setItemTaxes((current) => ({
-                            ...current,
-                            [item.id]: Number(event.target.value || 0),
-                          }))
-                        }
-                        className={inputClass.replace("mt-2 ", "")}
-                      />
-                    </td>
                     <td className="whitespace-nowrap px-4 py-4 text-right font-semibold text-slate-950">
                       <input type="hidden" name="itemNotes" value="" />
                       {formatMoney(lineTotal, selectedOption?.currency ?? currency)}
@@ -292,29 +288,47 @@ export function CustomerQuoteForm({
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-medium text-slate-500">Subtotal</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">
-            {formatMoney(subtotal, currency)}
+            {formatMoney(totals.subtotal, currency)}
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-medium text-slate-500">Discount</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">
-            {formatMoney(discount, currency)}
+            {formatMoney(totals.discountAmount, currency)}
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-medium text-slate-500">Tax + delivery</p>
+          <p className="text-sm font-medium text-slate-500">Taxable subtotal</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">
-            {formatMoney(tax + deliveryFee, currency)}
+            {formatMoney(totals.taxableSubtotal, currency)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-medium text-slate-500">Tax rate</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">
+            {formatTaxRate(totals.taxRate)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-medium text-slate-500">Tax amount</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">
+            {formatMoney(totals.taxAmount, currency)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+          <p className="text-sm font-medium text-slate-500">Delivery</p>
+          <p className="mt-2 text-2xl font-semibold text-slate-950">
+            {formatMoney(totals.deliveryCharge, currency)}
           </p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
           <p className="text-sm font-medium text-slate-500">Total</p>
           <p className="mt-2 text-2xl font-semibold text-slate-950">
-            {formatMoney(total, currency)}
+            {formatMoney(totals.total, currency)}
           </p>
         </div>
       </div>

@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
+import { calculateQuoteTotals, roundCurrency } from "@/lib/quotes/calculations";
 import { createClient } from "@/lib/supabase/server";
 
 export type CustomerQuoteState = {
@@ -19,8 +20,14 @@ function requiredString(value: FormDataEntryValue | null) {
 }
 
 function numberValue(value: FormDataEntryValue | null) {
-  const parsed = Number(value || 0);
+  const parsed = Number(String(value || 0).trim().replace(/%$/, ""));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function validatedNumber(value: FormDataEntryValue | null) {
+  const text = String(value ?? "").trim().replace(/%$/, "");
+  const parsed = Number(text || 0);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function currentYearRange() {
@@ -97,9 +104,9 @@ export async function createCustomerQuoteAction(
   const rfqId = requiredString(formData.get("rfqId"));
   const validUntil = optionalString(formData.get("validUntil"));
   const markupPercentage = numberValue(formData.get("markupPercentage"));
-  const quoteDiscount = numberValue(formData.get("discount"));
-  const deliveryFee = numberValue(formData.get("deliveryFee"));
-  const quoteTax = numberValue(formData.get("tax"));
+  const quoteDiscount = validatedNumber(formData.get("discount"));
+  const deliveryFee = validatedNumber(formData.get("deliveryFee"));
+  const quoteTaxRate = validatedNumber(formData.get("taxRate"));
   const notes = optionalString(formData.get("notes"));
   const terms = optionalString(formData.get("terms"));
   const rfqItemIds = formData.getAll("rfqItemId").map((value) => String(value));
@@ -107,11 +114,34 @@ export async function createCustomerQuoteAction(
     .getAll("selectedSupplierQuoteItemId")
     .map((value) => String(value));
   const itemDiscounts = formData.getAll("itemDiscount");
-  const itemTaxes = formData.getAll("itemTax");
   const itemNotes = formData.getAll("itemNotes");
 
   if (!rfqId) {
     return { error: "RFQ id is required." };
+  }
+
+  if (quoteTaxRate === null) {
+    return { error: "Tax rate must be a valid number." };
+  }
+
+  if (quoteDiscount === null) {
+    return { error: "Discount must be a valid number." };
+  }
+
+  if (deliveryFee === null) {
+    return { error: "Delivery charge must be a valid number." };
+  }
+
+  if (quoteTaxRate < 0 || quoteTaxRate > 100) {
+    return { error: "Tax rate must be between 0% and 100%." };
+  }
+
+  if (deliveryFee < 0) {
+    return { error: "Delivery charge cannot be negative." };
+  }
+
+  if (quoteDiscount < 0) {
+    return { error: "Discount cannot be negative." };
   }
 
   if (
@@ -156,12 +186,11 @@ export async function createCustomerQuoteAction(
     const selectedItemId = selectedSupplierQuoteItemIds[index];
     const supplierItem = selectedById.get(selectedItemId);
     const itemDiscount = numberValue(itemDiscounts[index]);
-    const itemTax = numberValue(itemTaxes[index]);
     const quantity = Number(supplierItem?.quantity ?? 0);
     const unitCost = Number(supplierItem?.unit_cost ?? 0);
-    const unitPrice = unitCost + unitCost * (markupPercentage / 100);
-    const lineSubtotal = quantity * unitPrice;
-    const totalPrice = Math.max(lineSubtotal - itemDiscount + itemTax, 0);
+    const unitPrice = roundCurrency(unitCost + unitCost * (markupPercentage / 100));
+    const lineSubtotal = roundCurrency(quantity * unitPrice);
+    const totalPrice = roundCurrency(Math.max(lineSubtotal - itemDiscount, 0));
 
     return {
       rfq_item_id: rfqItemId,
@@ -169,7 +198,7 @@ export async function createCustomerQuoteAction(
       quantity,
       unit_price: unitPrice,
       discount: itemDiscount,
-      tax: itemTax,
+      tax: 0,
       line_subtotal: lineSubtotal,
       total_price: totalPrice,
       notes: optionalString(itemNotes[index] ?? null),
@@ -180,10 +209,22 @@ export async function createCustomerQuoteAction(
     return { error: "Selected supplier pricing is missing or invalid." };
   }
 
-  const subtotal = quoteItems.reduce((sum, item) => sum + item.line_subtotal, 0);
-  const total = Math.max(subtotal - quoteDiscount + deliveryFee + quoteTax, 0);
+  const subtotal = roundCurrency(
+    quoteItems.reduce((sum, item) => sum + item.total_price, 0),
+  );
 
-  if (total <= 0) {
+  if (quoteDiscount > subtotal) {
+    return { error: "Discount cannot exceed subtotal." };
+  }
+
+  const totals = calculateQuoteTotals({
+    subtotal,
+    discountAmount: quoteDiscount,
+    taxRate: quoteTaxRate,
+    deliveryCharge: deliveryFee,
+  });
+
+  if (totals.total <= 0) {
     return { error: "Quote total must be greater than zero." };
   }
 
@@ -219,7 +260,7 @@ export async function createCustomerQuoteAction(
   }
 
   const triggeredRules = ((activeRules ?? []) as ApprovalRuleRow[]).filter(
-    (rule) => ruleIsTriggered(rule, total),
+    (rule) => ruleIsTriggered(rule, totals.total),
   );
   const approvalStatus =
     triggeredRules.length > 0 ? "pending" : "not_required";
@@ -234,11 +275,13 @@ export async function createCustomerQuoteAction(
       rfq_id: rfqId,
       quote_number: quoteNumber,
       revision: 1,
-      subtotal,
-      tax: quoteTax,
-      discount: quoteDiscount,
-      delivery_fee: deliveryFee,
-      total,
+      subtotal: totals.subtotal,
+      tax_rate: totals.taxRate,
+      tax_amount: totals.taxAmount,
+      tax: totals.taxAmount,
+      discount: totals.discountAmount,
+      delivery_fee: totals.deliveryCharge,
+      total: totals.total,
       margin_percentage: markupPercentage,
       status: "draft",
       approval_status: approvalStatus,
@@ -319,13 +362,13 @@ export async function createCustomerQuoteAction(
       triggeredRules.length > 0
         ? {
             quote_number: quoteNumber,
-            total,
+            total: totals.total,
             triggered_rule_ids: triggeredRules.map((rule) => rule.id),
             triggered_rule_names: triggeredRules.map((rule) => rule.name),
           }
         : {
             quote_number: quoteNumber,
-            total,
+            total: totals.total,
             approval_status: approvalStatus,
           },
   });

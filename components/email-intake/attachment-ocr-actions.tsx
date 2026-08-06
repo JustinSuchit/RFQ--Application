@@ -53,6 +53,12 @@ export function ExtractAttachmentButton({
         extractedItemCount?: number;
         warning?: string;
         status?: string;
+        ollama?: {
+          used?: boolean;
+          unavailable?: boolean;
+          error?: string | null;
+          returnedItems?: number;
+        };
       };
 
       if (!response.ok || !result.success) {
@@ -63,9 +69,18 @@ export function ExtractAttachmentButton({
         );
       }
 
+      const ollamaMessage = result.ollama
+        ? result.ollama.unavailable
+          ? ` Ollama assist unavailable: ${result.ollama.error || "local model did not respond"}.`
+          : result.ollama.used
+            ? ` Ollama assist returned ${result.ollama.returnedItems ?? 0} item candidates.`
+            : " Ollama assist skipped because parser already found items."
+        : "";
+
       setMessage(
-        result.warning ||
-          `Extraction ${result.status || "completed"}. Found ${result.extractedItemCount ?? 0} possible items.`,
+        `${result.warning || `Extraction ${result.status || "completed"}. Found ${
+          result.extractedItemCount ?? 0
+        } possible items.`}${ollamaMessage}`,
       );
       router.refresh();
     } catch (error) {

@@ -7,10 +7,16 @@ import {
   ExtractAttachmentButton,
   ImportAcceptedAttachmentItemsButton,
 } from "@/components/email-intake/attachment-ocr-actions";
+import { CustomerQuotePdfLinks } from "@/components/rfqs/quote-actions";
 import { DeleteRfqButton } from "@/components/rfqs/delete-rfq-button";
+import {
+  OriginalEmailSection,
+  type OriginalEmailView,
+} from "@/components/rfqs/original-email-section";
 import { StatusControl } from "@/components/rfqs/status-control";
 import { ExtractItemsButton } from "@/components/rfqs/extract-items-button";
 import { requireOrganization } from "@/lib/auth/session";
+import { formatTaxRate } from "@/lib/quotes/calculations";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -77,11 +83,14 @@ type CustomerQuote = {
   status: string;
   approval_status: string;
   subtotal: number | null;
+  tax_rate: number | null;
+  tax_amount: number | null;
   tax: number | null;
   discount: number | null;
   delivery_fee: number | null;
   total: number | null;
   valid_until: string | null;
+  created_at: string;
 };
 
 type ActivityLog = {
@@ -95,7 +104,13 @@ type LinkedEmail = {
   id: string;
   provider: string;
   subject: string;
+  from_name: string | null;
   from_email: string;
+  body: string | null;
+  body_text: string | null;
+  body_html: string | null;
+  body_preview: string | null;
+  received_at: string;
 };
 
 type EmailAttachment = {
@@ -111,6 +126,7 @@ type EmailAttachment = {
   extraction_method: string | null;
   extraction_error: string | null;
   extracted_at: string | null;
+  raw_extraction: Record<string, unknown> | null;
 };
 
 type AttachmentExtractedItem = {
@@ -153,8 +169,32 @@ function formatCurrency(value: number | null, currency: string) {
   return new Intl.NumberFormat("en", {
     style: "currency",
     currency,
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(value ?? 0);
+}
+
+function formatDateTime(value: string | null) {
+  if (!value) return "Not set";
+
+  return new Intl.DateTimeFormat("en", {
+    month: "short",
+    day: "2-digit",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function customerQuoteTaxAmount(quote: CustomerQuote) {
+  return Number(quote.tax_amount ?? quote.tax ?? 0);
+}
+
+function customerQuoteTaxRateLabel(quote: CustomerQuote) {
+  const taxAmount = customerQuoteTaxAmount(quote);
+  const taxRate = Number(quote.tax_rate ?? 0);
+  if (taxRate === 0 && taxAmount > 0) return null;
+  return formatTaxRate(taxRate);
 }
 
 function formatBytes(value: number | null) {
@@ -166,7 +206,89 @@ function formatBytes(value: number | null) {
 
 function textPreview(value: string | null) {
   if (!value) return "";
-  return value.replace(/\s+/g, " ").trim().slice(0, 500);
+  return value.replace(/\s+/g, " ").trim().slice(0, 2000);
+}
+
+function extractionPages(raw: Record<string, unknown> | null) {
+  const pages = raw?.pages;
+  return typeof pages === "number" && Number.isFinite(pages) ? pages : null;
+}
+
+function ollamaAssistLabel(raw: Record<string, unknown> | null) {
+  const ollama = raw?.ollama;
+  if (!ollama || typeof ollama !== "object") return null;
+
+  const data = ollama as {
+    enabled?: unknown;
+    used?: unknown;
+    unavailable?: unknown;
+    metadata?: { returnedItems?: unknown };
+  };
+
+  if (data.unavailable === true) return "Ollama assist: unavailable";
+  if (data.used === true) {
+    const returnedItems = data.metadata?.returnedItems;
+    return `Ollama assist: ${typeof returnedItems === "number" ? returnedItems : 0} candidates`;
+  }
+  if (data.enabled === true) return "Ollama assist: skipped";
+
+  return null;
+}
+
+function htmlToSafeText(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, " ")
+    .replace(/<form[\s\S]*?<\/form>/gi, " ")
+    .replace(/<img[^>]*>/gi, " ")
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function originalEmailBody(email: LinkedEmail) {
+  if (email.body_text?.trim()) {
+    return { body: email.body_text.trim(), note: null };
+  }
+
+  if (email.body_html?.trim()) {
+    return {
+      body: htmlToSafeText(email.body_html),
+      note: "HTML email body is displayed as sanitized text.",
+    };
+  }
+
+  if (email.body?.trim()) {
+    return { body: email.body.trim(), note: null };
+  }
+
+  if (email.body_preview?.trim()) {
+    return {
+      body: email.body_preview.trim(),
+      note: "Only a preview was stored for this older email.",
+    };
+  }
+
+  return {
+    body: "No full email body was stored for this message.",
+    note: "No full email body was stored for this message.",
+  };
+}
+
+function emailLabel(index: number) {
+  if (index === 0) return "Original Email";
+  if (index === 1) return "Follow-up Email";
+  return "Revised RFQ Email";
 }
 
 function Badge({ children }: { children: string }) {
@@ -255,7 +377,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
     supabase
       .from("customer_quotes")
       .select(
-        "id, quote_number, revision, status, approval_status, subtotal, tax, discount, delivery_fee, total, valid_until",
+        "id, quote_number, revision, status, approval_status, subtotal, tax_rate, tax_amount, tax, discount, delivery_fee, total, valid_until, created_at",
       )
       .eq("organization_id", organization.id)
       .eq("rfq_id", rfq.id)
@@ -269,17 +391,33 @@ export default async function RfqDetailPage({ params }: PageProps) {
       .limit(10),
     supabase
       .from("email_messages")
-      .select("id, provider, subject, from_email")
+      .select("id, provider, subject, from_name, from_email, body, body_text, body_html, body_preview, received_at")
       .eq("organization_id", organization.id)
       .eq("rfq_id", rfq.id)
-      .order("received_at", { ascending: false }),
+      .order("received_at", { ascending: true }),
   ]);
 
   const items = (itemsResponse.data ?? []) as RfqItem[];
   const supplierQuotes = (supplierQuotesResponse.data ?? []) as SupplierQuote[];
   const customerQuotes = (customerQuotesResponse.data ?? []) as CustomerQuote[];
+  const latestCustomerQuote = customerQuotes[0] ?? null;
   const activityLogs = (activityResponse.data ?? []) as ActivityLog[];
   const linkedEmails = (linkedEmailsResponse.data ?? []) as LinkedEmail[];
+  const originalEmails: OriginalEmailView[] = linkedEmails.map((email, index) => {
+    const body = originalEmailBody(email);
+
+    return {
+      id: email.id,
+      label: emailLabel(index),
+      subject: email.subject,
+      fromName: email.from_name,
+      fromEmail: email.from_email,
+      receivedAt: formatDateTime(email.received_at),
+      provider: labelize(email.provider),
+      body: body.body,
+      bodyNote: body.note,
+    };
+  });
   const linkedEmailIds = linkedEmails.map((email) => email.id);
   const [attachmentsResponse, extractedItemsResponse] =
     linkedEmailIds.length > 0
@@ -287,7 +425,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
           supabase
             .from("email_attachments")
             .select(
-              "id, email_message_id, provider_attachment_id, file_name, content_type, size_bytes, storage_path, ocr_status, extracted_text, extraction_method, extraction_error, extracted_at",
+              "id, email_message_id, provider_attachment_id, file_name, content_type, size_bytes, storage_path, ocr_status, extracted_text, extraction_method, extraction_error, extracted_at, raw_extraction",
             )
             .eq("organization_id", organization.id)
             .in("email_message_id", linkedEmailIds)
@@ -354,6 +492,31 @@ export default async function RfqDetailPage({ params }: PageProps) {
           </div>
         </div>
         <div className="flex flex-col gap-3">
+          {latestCustomerQuote ? (
+            <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">
+                Customer Quote
+              </p>
+              <p className="mt-1 text-sm font-semibold text-slate-950">
+                {latestCustomerQuote.quote_number}
+              </p>
+              <p className="mt-1 text-xs text-slate-600">
+                {labelize(latestCustomerQuote.status)} /{" "}
+                {labelize(latestCustomerQuote.approval_status)} /{" "}
+                {formatCurrency(latestCustomerQuote.total, organization.currency)}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <CustomerQuotePdfLinks
+                  quoteId={latestCustomerQuote.id}
+                  longLabels
+                />
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-600">
+              Generate a customer quote to view PDF.
+            </p>
+          )}
           <StatusControl rfqId={rfq.id} currentStatus={rfq.status} />
           {canDeleteRfq ? <DeleteRfqButton rfqId={rfq.id} /> : null}
         </div>
@@ -418,10 +581,27 @@ export default async function RfqDetailPage({ params }: PageProps) {
 
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-950">
+            Original Email
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            Review the source email alongside extracted items to confirm nothing was missed.
+          </p>
+        </div>
+        <OriginalEmailSection emails={originalEmails} />
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 px-5 py-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="text-lg font-semibold text-slate-950">
-              Requested items
-            </h2>
+            <div>
+              <h2 className="text-lg font-semibold text-slate-950">
+                Requested items
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-slate-600">
+                Compare extracted items with the Original Email above to confirm nothing was missed.
+              </p>
+            </div>
             {items.length === 0 && rfq.notes ? (
               <ExtractItemsButton rfqId={rfq.id} />
             ) : null}
@@ -522,6 +702,8 @@ export default async function RfqDetailPage({ params }: PageProps) {
                       (item) => item.email_attachment_id === attachment.id,
                     );
                     const method = attachment.extraction_method || "Not extracted";
+                    const pagesProcessed = extractionPages(attachment.raw_extraction);
+                    const ollamaLabel = ollamaAssistLabel(attachment.raw_extraction);
 
                     return (
                       <div
@@ -546,6 +728,16 @@ export default async function RfqDetailPage({ params }: PageProps) {
                               <span className="rounded-md bg-slate-100 px-2.5 py-1">
                                 Method: {labelize(method)}
                               </span>
+                              {pagesProcessed ? (
+                                <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                  Pages processed: {pagesProcessed}
+                                </span>
+                              ) : null}
+                              {ollamaLabel ? (
+                                <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                                  {ollamaLabel}
+                                </span>
+                              ) : null}
                             </div>
                             {attachment.extraction_method === "image_ocr" ? (
                               <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
@@ -557,7 +749,8 @@ export default async function RfqDetailPage({ params }: PageProps) {
                                 {attachment.extraction_error}
                               </p>
                             ) : null}
-                            {attachment.extraction_error?.includes("No readable PDF text found") ? (
+                            {attachment.extraction_error?.includes("No readable PDF text found") ||
+                            attachment.extraction_error?.includes("scanned or image-based") ? (
                               <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
                                 This PDF may be scanned or image-based. Upload an image version or use scanned PDF OCR when available.
                               </p>
@@ -681,7 +874,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
                     <th className="px-5 py-3">Currency</th>
                     <th className="px-5 py-3 text-right">Subtotal</th>
                     <th className="px-5 py-3 text-right">Freight</th>
-                    <th className="px-5 py-3 text-right">Tax</th>
+                    <th className="px-5 py-3 text-right">Tax amount</th>
                     <th className="px-5 py-3 text-right">Total</th>
                     <th className="px-5 py-3">Lead time</th>
                     <th className="px-5 py-3">Valid until</th>
@@ -808,7 +1001,15 @@ export default async function RfqDetailPage({ params }: PageProps) {
                       </td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-950">
                         <Link href={quoteHref} className="block">
-                          {formatCurrency(quote.tax, organization.currency)}
+                          {formatCurrency(
+                            customerQuoteTaxAmount(quote),
+                            organization.currency,
+                          )}
+                          {customerQuoteTaxRateLabel(quote) ? (
+                            <span className="mt-1 block text-xs font-medium text-slate-500">
+                              {customerQuoteTaxRateLabel(quote)}
+                            </span>
+                          ) : null}
                         </Link>
                       </td>
                       <td className="px-5 py-4 text-right font-semibold text-slate-950">
@@ -845,12 +1046,28 @@ export default async function RfqDetailPage({ params }: PageProps) {
                         </Link>
                       </td>
                       <td className="px-5 py-4">
-                        <Link
-                          href={quoteHref}
-                          className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
-                        >
-                          View Quote
-                        </Link>
+                        <div className="flex flex-wrap gap-2">
+                          <Link
+                            href={quoteHref}
+                            className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                          >
+                            View Quote
+                          </Link>
+                          <a
+                            href={`/api/customer-quotes/${quote.id}/pdf`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                          >
+                            View PDF
+                          </a>
+                          <a
+                            href={`/api/customer-quotes/${quote.id}/pdf?download=true`}
+                            className="inline-flex h-9 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                          >
+                            Download PDF
+                          </a>
+                        </div>
                       </td>
                     </tr>
                     );

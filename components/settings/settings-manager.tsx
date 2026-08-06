@@ -224,10 +224,19 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
       ) : null}
 
       {activeTab === "Currency & Tax" ? (
-        <Section title="Currency & Tax" description="Set quote currency, decimal tax rate, and default commercial assumptions.">
+        <Section title="Currency & Tax" description="Set quote currency, percentage tax rate, and default commercial assumptions.">
           <form action={currencyAction} className="grid gap-5 md:grid-cols-2">
             <label className="text-sm font-semibold text-slate-700">Currency<input name="currency" required disabled={!canManage} defaultValue={organization.currency} maxLength={3} className={inputClass} /></label>
-            <label className="text-sm font-semibold text-slate-700">Tax rate as decimal, e.g. 0.125 for 12.5%<input name="taxRate" type="number" step="0.0001" disabled={!canManage} defaultValue={organization.tax_rate} className={inputClass} /></label>
+            <label className="text-sm font-semibold text-slate-700">
+              Default tax rate (%)
+              <div className="mt-2 flex h-10 overflow-hidden rounded-md border border-slate-200 bg-white focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+                <input name="taxRate" type="number" min="0" max="100" step="0.01" disabled={!canManage} defaultValue={organization.tax_rate} className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-950 outline-none disabled:bg-slate-50 disabled:text-slate-500" />
+                <span className="flex items-center border-l border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-500">%</span>
+              </div>
+              <span className="mt-2 block text-xs font-medium text-slate-500">
+                This percentage is applied to taxable quote amounts.
+              </span>
+            </label>
             <label className="text-sm font-semibold text-slate-700">Default markup percentage<input name="defaultMarkupPercentage" type="number" step="0.0001" disabled={!canManage} defaultValue={settings.default_markup_percentage} className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">Default quote validity days<input name="defaultQuoteValidityDays" type="number" min="0" disabled={!canManage} defaultValue={settings.default_quote_validity_days} className={inputClass} /></label>
             <div className="md:col-span-2"><FormFooter state={currencyState} pending={currencyPending} canManage={canManage} label="Save Currency & Tax" /></div>

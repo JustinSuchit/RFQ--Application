@@ -78,7 +78,8 @@ function optionalText(formData: FormData, key: string) {
 }
 
 function numeric(formData: FormData, key: string, fallback = 0) {
-  const value = Number(formData.get(key) ?? fallback);
+  const rawValue = String(formData.get(key) ?? fallback).trim().replace(/%$/, "");
+  const value = Number(rawValue);
   return Number.isFinite(value) ? value : fallback;
 }
 
@@ -202,11 +203,18 @@ export async function updateCurrencyTaxAction(
   if (roleError) return { ...initialSettingsState, error: roleError };
 
   const currency = text(formData, "currency").toUpperCase();
-  const taxRate = numeric(formData, "taxRate", 0);
+  const rawTaxRate = text(formData, "taxRate").replace(/%$/, "").trim();
+  const taxRate = Number(rawTaxRate || 0);
   const defaultMarkupPercentage = numeric(formData, "defaultMarkupPercentage", 25);
   const defaultQuoteValidityDays = integer(formData, "defaultQuoteValidityDays", 30);
 
   if (!currency) return { ...initialSettingsState, error: "Currency is required." };
+  if (!Number.isFinite(taxRate)) {
+    return { ...initialSettingsState, error: "Tax rate must be a valid number." };
+  }
+  if (taxRate < 0 || taxRate > 100) {
+    return { ...initialSettingsState, error: "Tax rate must be between 0% and 100%." };
+  }
 
   const supabase = await createClient();
   const { error: orgError } = await supabase

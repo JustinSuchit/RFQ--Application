@@ -20,6 +20,7 @@ export type EmailIntakeState = {
 };
 
 const initialState: EmailIntakeState = { error: "" };
+const deleteEmailRoles = new Set(["owner", "admin", "manager", "procurement"]);
 
 function text(formData: FormData, key: string) {
   return String(formData.get(key) ?? "").trim();
@@ -91,6 +92,8 @@ export async function createManualEmailAction(
       subject,
       body_preview: preview(body),
       body,
+      body_text: body,
+      body_html: null,
       received_at: new Date(receivedAt).toISOString(),
       has_attachments: hasAttachments,
       classification,
@@ -204,8 +207,10 @@ export async function deleteEmailIntakeRecordAction(
   const redirectTo = text(formData, "redirectTo");
 
   if (!emailId) return { error: "Email id is required." };
+  if (!deleteEmailRoles.has(organization.role)) {
+    return { error: "You do not have permission to delete email intake records." };
+  }
 
-  // TODO: Tighten this to owner/admin/manager/procurement once centralized role permissions exist.
   const { data: email, error: emailError } = await supabase
     .from("email_messages")
     .select("id, rfq_id, subject")
@@ -214,7 +219,11 @@ export async function deleteEmailIntakeRecordAction(
     .maybeSingle();
 
   if (emailError || !email) {
-    return { error: emailError?.message ?? "Email intake record was not found." };
+    return {
+      error:
+        emailError?.message ??
+        "Email record not found or you do not have access to this email.",
+    };
   }
 
   const { data: attachments, error: attachmentsError } = await supabase
@@ -223,7 +232,9 @@ export async function deleteEmailIntakeRecordAction(
     .eq("organization_id", organization.id)
     .eq("email_message_id", emailId);
 
-  if (attachmentsError) return { error: attachmentsError.message };
+  if (attachmentsError) {
+    return { error: `Email delete failed: ${attachmentsError.message}` };
+  }
 
   const storagePaths = (attachments ?? [])
     .map((attachment) => attachment.storage_path)
@@ -235,7 +246,7 @@ export async function deleteEmailIntakeRecordAction(
       .remove(storagePaths);
 
     if (storageError) {
-      console.warn("Email attachment storage cleanup failed", storageError.message);
+      console.warn("Attachment cleanup failed", storageError.message);
     }
   }
 
@@ -245,7 +256,9 @@ export async function deleteEmailIntakeRecordAction(
     .eq("organization_id", organization.id)
     .eq("email_message_id", emailId);
 
-  if (extractedItemsError) return { error: extractedItemsError.message };
+  if (extractedItemsError) {
+    return { error: `Email delete failed: ${extractedItemsError.message}` };
+  }
 
   const { error: attachmentDeleteError } = await supabase
     .from("email_attachments")
@@ -253,7 +266,9 @@ export async function deleteEmailIntakeRecordAction(
     .eq("organization_id", organization.id)
     .eq("email_message_id", emailId);
 
-  if (attachmentDeleteError) return { error: attachmentDeleteError.message };
+  if (attachmentDeleteError) {
+    return { error: `Email delete failed: ${attachmentDeleteError.message}` };
+  }
 
   const { error: deleteError } = await supabase
     .from("email_messages")
@@ -261,7 +276,7 @@ export async function deleteEmailIntakeRecordAction(
     .eq("id", emailId)
     .eq("organization_id", organization.id);
 
-  if (deleteError) return { error: deleteError.message };
+  if (deleteError) return { error: `Email delete failed: ${deleteError.message}` };
 
   await logActivity(supabase, organization.id, user.id, "Email intake record deleted", {
     email_message_id: emailId,
@@ -322,7 +337,7 @@ export async function createRfqFromEmailAction(
 
   const { data: email, error: emailError } = await supabase
     .from("email_messages")
-    .select("id, from_name, from_email, subject, body_preview, body, rfq_id")
+    .select("id, from_name, from_email, subject, body_preview, body, body_text, body_html, rfq_id")
     .eq("id", id)
     .eq("organization_id", organization.id)
     .single();
@@ -389,7 +404,7 @@ export async function createRfqFromEmailAction(
         source: "manual_email",
         priority: "normal",
         status: "draft",
-        notes: email.body,
+        notes: email.body_text ?? email.body ?? email.body_preview,
         created_by: user.id,
       })
       .select("id")
@@ -459,7 +474,7 @@ export async function createRfqFromEmailAction(
 
   try {
     extractedItems = extractRfqItemsFromEmailText(
-      [email.subject, email.body_preview, email.body].filter(Boolean).join("\n"),
+      [email.subject, email.body_preview, email.body_text, email.body].filter(Boolean).join("\n"),
     );
   } catch {
     extractedItems = [];

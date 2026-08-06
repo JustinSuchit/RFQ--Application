@@ -150,11 +150,12 @@ export function OnboardingForm() {
         </label>
 
         <label className="block text-sm font-semibold text-slate-700">
-          Tax rate
+          Tax rate (%)
           <input
             type="number"
-            step="0.0001"
+            step="0.01"
             min="0"
+            max="100"
             value={taxRate}
             onChange={(event) => setTaxRate(event.target.value)}
             required

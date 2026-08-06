@@ -1,7 +1,9 @@
 import { revalidatePath } from "next/cache";
 import { extractTextFromAttachment } from "@/lib/attachments/extract-text";
+import { extractRfqItemsWithOllama } from "@/lib/attachments/ollama-rfq-extractor";
 import { getCurrentOrganization, getCurrentUser } from "@/lib/auth/session";
 import {
+  type ExtractedRfqItem,
   extractRfqItemsFromEmailText,
   isSupplierQuoteTableText,
 } from "@/lib/email/rfq-item-extractor";
@@ -10,6 +12,31 @@ import { createClient } from "@/lib/supabase/server";
 export const runtime = "nodejs";
 const attachmentBucket = "rfq-email-attachments";
 const maxImageOcrBytes = 10 * 1024 * 1024;
+const maxLocalPdfExtractionBytes = 15 * 1024 * 1024;
+const largePdfMessage =
+  "PDF is too large for local extraction. Please split the file or process it with the production OCR service.";
+
+function itemKey(item: Pick<ExtractedRfqItem, "description" | "quantity" | "unit">) {
+  return `${item.description.trim().toLowerCase()}|${Number(item.quantity ?? 0)}|${String(
+    item.unit ?? "",
+  )
+    .trim()
+    .toLowerCase()}`;
+}
+
+function mergeExtractedItems(primary: ExtractedRfqItem[], secondary: ExtractedRfqItem[]) {
+  const merged: ExtractedRfqItem[] = [];
+  const keys = new Set<string>();
+
+  for (const item of [...primary, ...secondary]) {
+    const key = itemKey(item);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    merged.push(item);
+  }
+
+  return merged;
+}
 
 type RouteContext = {
   params: Promise<{
@@ -83,6 +110,33 @@ export async function POST(_request: Request, context: RouteContext) {
       [".png", ".jpg", ".jpeg", ".webp", ".bmp"].some((extension) =>
         lowerFileName.endsWith(extension),
       );
+    const isPdf =
+      normalizedContentType === "application/pdf" || lowerFileName.endsWith(".pdf");
+
+    if (isPdf && (attachment.size_bytes ?? 0) > maxLocalPdfExtractionBytes) {
+      await supabase
+        .from("email_attachments")
+        .update({
+          ocr_status: "failed",
+          extraction_method: "pdf_text",
+          extraction_error: largePdfMessage,
+          extracted_at: new Date().toISOString(),
+          raw_extraction: {
+            sizeBytes: attachment.size_bytes,
+            maxLocalPdfExtractionBytes,
+          },
+        })
+        .eq("id", attachment.id)
+        .eq("organization_id", organization.id);
+
+      return Response.json(
+        {
+          success: false,
+          error: largePdfMessage,
+        },
+        { status: 400 },
+      );
+    }
 
     if (isImage && (attachment.size_bytes ?? 0) > maxImageOcrBytes) {
       await supabase
@@ -162,6 +216,32 @@ export async function POST(_request: Request, context: RouteContext) {
     }
 
     const fileBuffer = Buffer.from(await file.arrayBuffer());
+
+    if (isPdf && fileBuffer.byteLength > maxLocalPdfExtractionBytes) {
+      await supabase
+        .from("email_attachments")
+        .update({
+          ocr_status: "failed",
+          extraction_method: "pdf_text",
+          extraction_error: largePdfMessage,
+          extracted_at: new Date().toISOString(),
+          raw_extraction: {
+            sizeBytes: fileBuffer.byteLength,
+            maxLocalPdfExtractionBytes,
+          },
+        })
+        .eq("id", attachment.id)
+        .eq("organization_id", organization.id);
+
+      return Response.json(
+        {
+          success: false,
+          error: largePdfMessage,
+        },
+        { status: 400 },
+      );
+    }
+
     const extraction = await extractTextFromAttachment({
       fileBuffer,
       fileName: attachment.file_name || "attachment",
@@ -191,11 +271,19 @@ export async function POST(_request: Request, context: RouteContext) {
 
     let extractedItemCount = 0;
     let supplierQuoteTableDetected = false;
+    let ollamaAssist:
+      | Awaited<ReturnType<typeof extractRfqItemsWithOllama>>
+      | null = null;
     if (extraction.text) {
-      let items;
+      let items: ExtractedRfqItem[];
       try {
         supplierQuoteTableDetected = isSupplierQuoteTableText(extraction.text);
         items = extractRfqItemsFromEmailText(extraction.text);
+        ollamaAssist = await extractRfqItemsWithOllama({
+          text: extraction.text,
+          existingItemCount: items.length,
+        });
+        items = mergeExtractedItems(items, ollamaAssist.items);
       } catch (error) {
         return Response.json(
           {
@@ -216,44 +304,91 @@ export async function POST(_request: Request, context: RouteContext) {
         .in("status", ["pending", "rejected"]);
 
       if (items.length) {
-        const { error: itemError } = await supabase
+        const { data: existingItems, error: existingItemsError } = await supabase
           .from("attachment_extracted_items")
-          .insert(
-            items.map((item) => ({
-              organization_id: organization.id,
-              email_message_id: attachment.email_message_id,
-              email_attachment_id: attachment.id,
-              description: item.description,
-              quantity: item.quantity,
-              unit: item.unit,
-              notes: item.notes ?? null,
-              confidence:
-                item.confidence ?? (extraction.method === "image_ocr" ? 0.6 : 0.75),
-              status: "pending",
-            })),
-          );
+          .select("description, quantity, unit")
+          .eq("organization_id", organization.id)
+          .eq("email_attachment_id", attachment.id);
 
-        if (itemError) {
+        if (existingItemsError) {
           return Response.json(
-            { success: false, error: itemError.message },
+            { success: false, error: existingItemsError.message },
             { status: 400 },
           );
         }
+
+        const existingKeys = new Set(
+          (existingItems ?? []).map((item) =>
+            itemKey({
+              description: String(item.description ?? ""),
+              quantity: Number(item.quantity ?? 0),
+              unit: item.unit as string | null,
+            }),
+          ),
+        );
+        const pendingRows = [];
+
+        for (const item of items) {
+          const key = itemKey(item);
+          if (existingKeys.has(key)) continue;
+          existingKeys.add(key);
+          pendingRows.push({
+            organization_id: organization.id,
+            email_message_id: attachment.email_message_id,
+            email_attachment_id: attachment.id,
+            description: item.description,
+            quantity: item.quantity,
+            unit: item.unit,
+            notes: item.notes ?? null,
+            confidence:
+              item.confidence ?? (extraction.method === "image_ocr" ? 0.6 : 0.75),
+            status: "pending",
+          });
+        }
+
+        extractedItemCount = pendingRows.length;
+
+        if (pendingRows.length > 0) {
+          const { error: itemError } = await supabase
+            .from("attachment_extracted_items")
+            .insert(pendingRows);
+
+          if (itemError) {
+            return Response.json(
+              { success: false, error: itemError.message },
+              { status: 400 },
+            );
+          }
+        }
       }
 
-      extractedItemCount = items.length;
+      if (ollamaAssist?.enabled) {
+        await supabase
+          .from("email_attachments")
+          .update({
+            raw_extraction: {
+              ...extraction.raw,
+              ollama: {
+                enabled: ollamaAssist.enabled,
+                used: ollamaAssist.used,
+                unavailable: ollamaAssist.unavailable,
+                error: ollamaAssist.error,
+                metadata: ollamaAssist.metadata,
+              },
+            },
+          })
+          .eq("id", attachment.id)
+          .eq("organization_id", organization.id);
+      }
     }
 
     revalidatePath(`/email-intake/${attachment.email_message_id}`);
     revalidatePath(`/rfqs/${email.rfq_id}`);
 
     if (extraction.status === "failed") {
-      const isPdf =
-        attachment.content_type === "application/pdf" ||
-        (attachment.file_name || "").toLowerCase().endsWith(".pdf");
       const imageOcrFailed = extraction.method === "image_ocr";
       const noReadablePdfText =
-        isPdf && extraction.error?.startsWith("No readable PDF text found");
+        isPdf && extraction.error?.startsWith("This PDF may be scanned");
 
       return Response.json(
         {
@@ -268,7 +403,7 @@ export async function POST(_request: Request, context: RouteContext) {
               ? "PDF text extraction failed"
               : "Attachment text extraction failed",
           details: noReadablePdfText
-            ? "This may be a scanned or image-based PDF."
+            ? extraction.error
             : extraction.error ?? "Attachment text extraction failed.",
           extractedTextPreview: extraction.text.slice(0, 1000),
           extractedItemCount,
@@ -289,6 +424,14 @@ export async function POST(_request: Request, context: RouteContext) {
             ? "Text was extracted, but no clean item table rows were detected."
             : "Text was extracted, but no RFQ item rows were detected."
           : undefined,
+      ollama: ollamaAssist?.enabled
+        ? {
+            used: ollamaAssist.used,
+            unavailable: ollamaAssist.unavailable,
+            error: ollamaAssist.error,
+            returnedItems: ollamaAssist.metadata.returnedItems,
+          }
+        : undefined,
       method: extraction.method,
       status: extraction.status,
     });

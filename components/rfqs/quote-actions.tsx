@@ -19,6 +19,33 @@ type CustomerQuoteActionsProps = {
   approvalStatus: string;
 };
 
+export function CustomerQuotePdfLinks({
+  quoteId,
+  longLabels = false,
+}: {
+  quoteId: string;
+  longLabels?: boolean;
+}) {
+  return (
+    <>
+      <a
+        href={`/api/customer-quotes/${quoteId}/pdf`}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+      >
+        {longLabels ? "View Customer Quote PDF" : "View PDF"}
+      </a>
+      <a
+        href={`/api/customer-quotes/${quoteId}/pdf?download=true`}
+        className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+      >
+        {longLabels ? "Download Customer Quote PDF" : "Download PDF"}
+      </a>
+    </>
+  );
+}
+
 export function PrintButton() {
   return (
     <button
@@ -26,7 +53,7 @@ export function PrintButton() {
       onClick={() => window.print()}
       className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
     >
-      Download PDF
+      Print
     </button>
   );
 }

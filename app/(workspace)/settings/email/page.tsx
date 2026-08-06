@@ -22,7 +22,7 @@ export default async function EmailSettingsPage() {
     supabase
       .from("email_connections")
       .select(
-        "id, provider, mailbox_email, imap_host, imap_port, imap_secure, imap_username, scan_folder, only_unread, is_active, last_uid, last_scan_at",
+        "id, provider, mailbox_email, imap_host, imap_port, imap_secure, imap_username, scan_folder, only_unread, is_active, last_uid, last_processed_uid, last_uid_validity, last_scan_at, auto_scan_enabled, scan_interval_minutes, next_scan_at, last_scan_status, last_scan_error, scan_in_progress, scan_started_at",
       )
       .eq("organization_id", currentOrganization.id)
       .eq("provider", "imap")

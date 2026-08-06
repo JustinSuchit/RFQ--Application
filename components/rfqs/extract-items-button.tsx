@@ -33,6 +33,13 @@ export function ExtractItemsButton({ rfqId }: { rfqId: string }) {
       {state.success ? (
         <p className="text-sm font-medium text-teal-700">{state.success}</p>
       ) : null}
+      {process.env.NODE_ENV !== "production" && state.diagnostics ? (
+        <p className="text-xs leading-5 text-slate-500">
+          Source: {state.diagnostics.sourceUsed.replace(/_/g, " ")} · Parser:{" "}
+          {state.diagnostics.parser.replace(/_/g, " ")} · Rows found:{" "}
+          {state.diagnostics.finalCandidateCount}
+        </p>
+      ) : null}
     </form>
   );
 }

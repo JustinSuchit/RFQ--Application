@@ -44,6 +44,10 @@ export type MicrosoftGraphMessage = {
     };
   };
   subject?: string | null;
+  body?: {
+    contentType?: string | null;
+    content?: string | null;
+  } | null;
   bodyPreview?: string | null;
   receivedDateTime?: string | null;
   hasAttachments?: boolean | null;
@@ -66,6 +70,8 @@ export type MicrosoftScannedMessage = {
   fromName: string | null;
   subject: string;
   bodyPreview: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
   receivedAt: string;
   hasAttachments: boolean;
   classification: "likely_rfq" | "possible_rfq" | "not_rfq";
@@ -95,6 +101,21 @@ function requiredEnv(name: string) {
   }
 
   return value;
+}
+
+function htmlToPlainText(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function microsoftTenantId() {
@@ -336,7 +357,7 @@ export async function scanMicrosoftInbox(
 
   const folderName = connection.graph_scan_folder?.trim() || "inbox";
   const response = await fetch(
-    `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folderId)}/messages?$top=25&$select=id,conversationId,from,subject,bodyPreview,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc`,
+    `https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(folderId)}/messages?$top=25&$select=id,conversationId,from,subject,body,bodyPreview,receivedDateTime,hasAttachments&$orderby=receivedDateTime desc`,
     {
       headers: { authorization: `Bearer ${token}` },
     },
@@ -354,8 +375,12 @@ export async function scanMicrosoftInbox(
     scanned: messages.length,
     messages: messages.map((message) => {
       const subject = message.subject ?? "(No subject)";
-      const bodyPreview = message.bodyPreview ?? "";
-      const classification = classifyRfqEmail(subject, bodyPreview);
+      const graphBody = message.body?.content ?? "";
+      const bodyContentType = (message.body?.contentType ?? "").toLowerCase();
+      const bodyText = bodyContentType === "html" ? htmlToPlainText(graphBody) : graphBody.trim();
+      const bodyHtml = bodyContentType === "html" ? graphBody : null;
+      const bodyPreview = message.bodyPreview || bodyText.replace(/\s+/g, " ").slice(0, 1000);
+      const classification = classifyRfqEmail(subject, bodyText || bodyPreview);
       const emailAddress = message.from?.emailAddress;
 
       return {
@@ -365,6 +390,8 @@ export async function scanMicrosoftInbox(
         fromName: emailAddress?.name ?? null,
         subject,
         bodyPreview,
+        bodyText: bodyText || null,
+        bodyHtml,
         receivedAt: message.receivedDateTime ?? new Date().toISOString(),
         hasAttachments: Boolean(message.hasAttachments),
         classification: classification.classification,

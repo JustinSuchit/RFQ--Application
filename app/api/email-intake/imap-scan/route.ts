@@ -3,9 +3,9 @@ import { getCurrentOrganization, getCurrentUser } from "@/lib/auth/session";
 import {
   getActiveImapConnectionForOrganization,
   getImapErrorDetails,
-  scanImapInbox,
   validateImapConnection,
 } from "@/lib/email/imap";
+import { scanImapConnection } from "@/lib/email/scan-imap-connection";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
@@ -36,18 +36,6 @@ export async function POST() {
       organization.id,
     );
 
-    console.log("IMAP scan config", {
-      hasConnection: Boolean(connection),
-      provider: connection?.provider,
-      isActive: connection?.is_active,
-      host: connection?.imap_host,
-      port: connection?.imap_port,
-      secure: connection?.imap_secure,
-      username: connection?.imap_username,
-      hasPassword: Boolean(connection?.imap_password_encrypted),
-      scanFolder: connection?.scan_folder,
-    });
-
     const validationError = validateImapConnection(connection);
     if (validationError) {
       return Response.json(
@@ -67,21 +55,13 @@ export async function POST() {
       );
     }
 
-    const summary = await scanImapInbox(supabase, connection);
-    const { error: activityError } = await supabase.from("activity_logs").insert({
-      organization_id: organization.id,
-      user_id: user.id,
-      action: "IMAP inbox scanned",
-      details: {
-        scanned: summary.scanned,
-        imported: summary.insertedOrUpdated,
-        skipped_not_rfq: summary.skippedNotRfq,
-      },
+    const summary = await scanImapConnection({
+      supabase,
+      connectionId: connection.id,
+      organizationId: organization.id,
+      trigger: "manual",
+      userId: user.id,
     });
-
-    if (activityError) {
-      console.error("Activity log insert failed", activityError.message);
-    }
 
     revalidatePath("/email-intake");
     revalidatePath("/settings/email");

@@ -7,6 +7,28 @@ Attachment files are stored under:
 
 `organizations/{organization_id}/emails/{email_message_id}/{attachment_id}-{file_name}`
 
+## Optional Local Ollama RFQ Assist
+
+The attachment pipeline can optionally ask a local Ollama model to extract RFQ item rows from text that was already produced by `pdf-parse` or image OCR. This does not replace PDF extraction or OCR; it only helps structure messy extracted text before pending items are inserted for review.
+
+1. Install and start Ollama locally.
+2. Pull a model, for example:
+
+```bash
+ollama pull llama3.1:8b
+```
+
+3. In `.env.local`, set:
+
+```bash
+OLLAMA_ENABLED=true
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=llama3.1:8b
+OLLAMA_RFQ_ASSIST_MODE=when_empty
+```
+
+`OLLAMA_RFQ_ASSIST_MODE=when_empty` keeps the current deterministic parser as the primary extractor and only asks Ollama when no item rows are found. Use `always` if you want Ollama to add candidates alongside the parser on every extraction.
+
 ## Getting Started
 
 First, run the development server:

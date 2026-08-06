@@ -21,6 +21,9 @@ type PdfParseFunctionResult = {
   text?: string;
 };
 
+const scannedPdfMessage =
+  "This PDF may be scanned or image-based. Multi-page scanned PDF OCR requires page image conversion and will be added in a later phase.";
+
 async function loadPdfParse() {
   const pdfParseModule = await import("pdf-parse/lib/pdf-parse.js");
   const pdfParse =
@@ -47,26 +50,61 @@ function normalizeContentType(contentType: string | null) {
   return (contentType || "").split(";")[0].trim().toLowerCase();
 }
 
-function previewText(value: string) {
-  return value.replace(/\s+/g, " ").trim();
+function normalizeExtractedText(value: string) {
+  return value
+    .replace(/\r/g, "\n")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function safePdfInfo(info: Record<string, unknown> | undefined) {
+  if (!info) return null;
+
+  const safeKeys = [
+    "PDFFormatVersion",
+    "IsAcroFormPresent",
+    "IsXFAPresent",
+    "Title",
+    "Author",
+    "Subject",
+    "Creator",
+    "Producer",
+    "CreationDate",
+    "ModDate",
+  ];
+  const safeInfo: Record<string, string | number | boolean | null> = {};
+
+  for (const key of safeKeys) {
+    const value = info[key];
+    if (typeof value === "string") {
+      safeInfo[key] = value.slice(0, 500);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      safeInfo[key] = value;
+    } else if (value === null) {
+      safeInfo[key] = null;
+    }
+  }
+
+  return Object.keys(safeInfo).length ? safeInfo : null;
 }
 
 async function extractPdfText(fileBuffer: Buffer): Promise<AttachmentTextExtractionResult> {
   const pdfParse = await loadPdfParse();
   const parsed = await pdfParse(fileBuffer);
-  const text = previewText(parsed.text || "");
+  const text = normalizeExtractedText(parsed.text || "");
 
   if (text.length <= 20) {
     return {
       status: "failed",
       text: "",
       method: "pdf_text",
-      error: "No readable PDF text found. This PDF may be scanned or image-based.",
+      error: scannedPdfMessage,
       raw: {
-        pageCount: parsed.numpages ?? null,
+        pages: parsed.numpages ?? null,
         textLength: text.length,
-        info: parsed.info ?? null,
-        note: "This PDF may be scanned or image-based. Scanned PDF OCR will be added in a later phase.",
+        info: safePdfInfo(parsed.info),
+        note: scannedPdfMessage,
       },
     };
   }
@@ -77,9 +115,9 @@ async function extractPdfText(fileBuffer: Buffer): Promise<AttachmentTextExtract
     method: "pdf_text",
     error: null,
     raw: {
-      pageCount: parsed.numpages ?? null,
+      pages: parsed.numpages ?? null,
       textLength: text.length,
-      info: parsed.info ?? null,
+      info: safePdfInfo(parsed.info),
     },
   };
 }
@@ -92,7 +130,7 @@ async function extractImageText(fileBuffer: Buffer): Promise<AttachmentTextExtra
 
   try {
     const result = await worker.recognize(fileBuffer);
-    const text = previewText(result.data.text || "");
+    const text = normalizeExtractedText(result.data.text || "");
 
     return {
       status: text ? "completed" : "failed",

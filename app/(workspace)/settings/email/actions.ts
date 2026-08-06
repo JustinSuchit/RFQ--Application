@@ -49,6 +49,11 @@ export async function saveImapConnectionAction(
   const scanFolder = text(formData, "scanFolder") || "INBOX";
   const onlyUnread = formData.get("onlyUnread") === "on";
   const isActive = formData.get("isActive") === "on";
+  const autoScanEnabled = formData.get("autoScanEnabled") === "on";
+  const scanIntervalMinutes = Math.max(
+    60,
+    Math.trunc(numeric(formData, "scanIntervalMinutes", 60)),
+  );
 
   if (!mailboxEmail) return { ...initialState, error: "Mailbox email is required." };
   if (!imapHost) return { ...initialState, error: "IMAP host is required." };
@@ -57,14 +62,14 @@ export async function saveImapConnectionAction(
   const supabase = await createClient();
   const { data: existingConnection, error: lookupError } = await supabase
     .from("email_connections")
-    .select("id")
+    .select("id, auto_scan_enabled")
     .eq("organization_id", organization.id)
     .eq("provider", "imap")
     .maybeSingle();
 
   if (lookupError) return { ...initialState, error: lookupError.message };
 
-  const payload = {
+  const payload: Record<string, string | number | boolean | null> = {
     mailbox_email: mailboxEmail,
     imap_host: imapHost,
     imap_port: imapPort,
@@ -73,7 +78,15 @@ export async function saveImapConnectionAction(
     scan_folder: scanFolder,
     only_unread: onlyUnread,
     is_active: isActive,
+    auto_scan_enabled: autoScanEnabled,
+    scan_interval_minutes: scanIntervalMinutes,
   };
+
+  if (!autoScanEnabled) {
+    payload.next_scan_at = null;
+  } else if (!existingConnection?.auto_scan_enabled) {
+    payload.next_scan_at = new Date().toISOString();
+  }
 
   const response = existingConnection
     ? await supabase
@@ -108,6 +121,8 @@ export async function saveImapConnectionAction(
       scan_folder: scanFolder,
       only_unread: onlyUnread,
       is_active: isActive,
+      auto_scan_enabled: autoScanEnabled,
+      scan_interval_minutes: scanIntervalMinutes,
     },
   });
 

@@ -168,6 +168,8 @@ create table if not exists public.customer_quotes (
   quote_number text not null,
   revision integer not null default 1,
   subtotal numeric(14, 2) not null default 0,
+  tax_rate numeric(10, 4) not null default 0,
+  tax_amount numeric(14, 2) not null default 0,
   tax numeric(14, 2) not null default 0,
   discount numeric(14, 2) not null default 0,
   delivery_fee numeric(14, 2) not null default 0,

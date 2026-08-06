@@ -12,10 +12,12 @@ export function DeleteEmailIntakeButton({
   emailId,
   linkedRfq,
   redirectTo,
+  compact = false,
 }: {
   emailId: string;
   linkedRfq: boolean;
   redirectTo: "list" | "detail";
+  compact?: boolean;
 }) {
   const [state, action, pending] = useActionState(
     deleteEmailIntakeRecordAction,
@@ -23,8 +25,8 @@ export function DeleteEmailIntakeButton({
   );
 
   const confirmation = linkedRfq
-    ? "This email is linked to an RFQ. Deleting the email record will keep the RFQ but remove the email intake history."
-    : "Delete this email intake record? This will not delete any RFQ already created from it.";
+    ? "This email is linked to an RFQ. Deleting the email intake record will keep the RFQ but remove the source email history. Continue?"
+    : "Delete this email intake record?";
 
   return (
     <form action={action} className="inline-flex flex-col items-end gap-2">
@@ -37,7 +39,11 @@ export function DeleteEmailIntakeButton({
             event.preventDefault();
           }
         }}
-        className="rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm transition hover:border-rose-300 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+        className={
+          compact
+            ? "rounded-md border border-rose-200 bg-white px-2.5 py-2 text-xs font-semibold text-rose-700 shadow-sm transition hover:border-rose-300 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+            : "rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm transition hover:border-rose-300 hover:text-rose-800 disabled:cursor-not-allowed disabled:opacity-60"
+        }
       >
         {pending ? "Deleting..." : "Delete"}
       </button>

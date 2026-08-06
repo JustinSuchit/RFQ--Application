@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   CustomerQuoteApprovalActions,
+  CustomerQuotePdfLinks,
   CustomerQuoteStatusActions,
   PrintButton,
 } from "@/components/rfqs/quote-actions";
@@ -11,6 +12,7 @@ import {
   requireOrganization,
   requireUser,
 } from "@/lib/auth/session";
+import { formatTaxRate, roundCurrency } from "@/lib/quotes/calculations";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -39,6 +41,8 @@ type CustomerQuote = {
   quote_number: string;
   revision: number;
   subtotal: number | null;
+  tax_rate: number | null;
+  tax_amount: number | null;
   tax: number | null;
   discount: number | null;
   delivery_fee: number | null;
@@ -128,6 +132,20 @@ function formatUser(value: string | null) {
   return value.slice(0, 8);
 }
 
+function savedTaxAmount(quote: CustomerQuote) {
+  return Number(quote.tax_amount ?? quote.tax ?? 0);
+}
+
+function shouldShowTaxRate(quote: CustomerQuote) {
+  return !(Number(quote.tax_rate ?? 0) === 0 && savedTaxAmount(quote) > 0);
+}
+
+function taxSummaryLabel(quote: CustomerQuote) {
+  return shouldShowTaxRate(quote)
+    ? `Tax (${formatTaxRate(quote.tax_rate)})`
+    : "Tax amount";
+}
+
 export default async function CustomerQuoteDetailPage({ params }: PageProps) {
   const { id, quoteId } = await params;
   await requireUser();
@@ -184,7 +202,7 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
     supabase
       .from("customer_quotes")
       .select(
-        "id, quote_number, revision, subtotal, tax, discount, delivery_fee, total, status, approval_status, valid_until, created_at, notes",
+        "id, quote_number, revision, subtotal, tax_rate, tax_amount, tax, discount, delivery_fee, total, status, approval_status, valid_until, created_at, notes",
       )
       .eq("id", quoteId)
       .eq("rfq_id", id)
@@ -254,6 +272,10 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
   const canApprove = canApproveQuote(organization.role);
   const showApprovalActions =
     quote.approval_status === "pending" && canApprove;
+  const taxAmount = savedTaxAmount(quote);
+  const taxableSubtotal = roundCurrency(
+    Math.max(Number(quote.subtotal ?? 0) - Number(quote.discount ?? 0), 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -278,6 +300,7 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
         </div>
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap gap-2">
+            <CustomerQuotePdfLinks quoteId={quote.id} />
             <PrintButton />
             <Link
               href={`/rfqs/${rfq.id}`}
@@ -469,7 +492,6 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
                 <th className="px-6 py-3 text-right">Quantity</th>
                 <th className="px-6 py-3 text-right">Unit price</th>
                 <th className="px-6 py-3 text-right">Discount</th>
-                <th className="px-6 py-3 text-right">Tax</th>
                 <th className="px-6 py-3 text-right">Total price</th>
               </tr>
             </thead>
@@ -495,16 +517,13 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
                       {formatCurrency(item.discount, currency)}
                     </td>
                     <td className="whitespace-nowrap px-6 py-4 text-right font-semibold text-slate-950">
-                      {formatCurrency(item.tax, currency)}
-                    </td>
-                    <td className="whitespace-nowrap px-6 py-4 text-right font-semibold text-slate-950">
                       {formatCurrency(item.total_price, currency)}
                     </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={5}>
                     <EmptyState title="No quote items found" />
                   </td>
                 </tr>
@@ -550,15 +569,27 @@ export default async function CustomerQuoteDetailPage({ params }: PageProps) {
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-slate-600">Delivery fee</span>
+                <span className="text-slate-600">Taxable subtotal</span>
                 <span className="font-semibold text-slate-950">
-                  {formatCurrency(quote.delivery_fee, currency)}
+                  {formatCurrency(taxableSubtotal, currency)}
                 </span>
               </div>
               <div className="flex justify-between gap-4">
-                <span className="text-slate-600">Tax</span>
+                <span className="text-slate-600">Tax rate</span>
                 <span className="font-semibold text-slate-950">
-                  {formatCurrency(quote.tax, currency)}
+                  {shouldShowTaxRate(quote) ? formatTaxRate(quote.tax_rate) : "Not set"}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">{taxSummaryLabel(quote)}</span>
+                <span className="font-semibold text-slate-950">
+                  {formatCurrency(taxAmount, currency)}
+                </span>
+              </div>
+              <div className="flex justify-between gap-4">
+                <span className="text-slate-600">Delivery</span>
+                <span className="font-semibold text-slate-950">
+                  {formatCurrency(quote.delivery_fee, currency)}
                 </span>
               </div>
               <div className="flex justify-between gap-4 border-t border-slate-200 pt-4 text-lg">

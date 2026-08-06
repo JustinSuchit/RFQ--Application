@@ -22,6 +22,8 @@ type EmailMessage = {
   subject: string;
   body_preview: string | null;
   body: string | null;
+  body_text: string | null;
+  body_html: string | null;
   received_at: string;
   has_attachments: boolean;
   classification: string;
@@ -41,6 +43,7 @@ type EmailAttachment = {
   extraction_method: string | null;
   extraction_error: string | null;
   extracted_at: string | null;
+  raw_extraction: Record<string, unknown> | null;
 };
 
 
@@ -68,6 +71,65 @@ function formatBytes(value: number | null) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function extractionPages(raw: Record<string, unknown> | null) {
+  const pages = raw?.pages;
+  return typeof pages === "number" && Number.isFinite(pages) ? pages : null;
+}
+
+function htmlToSafeText(value: string) {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<iframe[\s\S]*?<\/iframe>/gi, " ")
+    .replace(/<form[\s\S]*?<\/form>/gi, " ")
+    .replace(/<img[^>]*>/gi, " ")
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function emailBody(email: EmailMessage) {
+  return (
+    email.body_text ||
+    (email.body_html ? htmlToSafeText(email.body_html) : "") ||
+    email.body ||
+    email.body_preview ||
+    "No email body was logged."
+  );
+}
+
+function ollamaAssistLabel(raw: Record<string, unknown> | null) {
+  const ollama = raw?.ollama;
+  if (!ollama || typeof ollama !== "object") return null;
+
+  const data = ollama as {
+    enabled?: unknown;
+    used?: unknown;
+    unavailable?: unknown;
+    metadata?: { returnedItems?: unknown };
+  };
+
+  if (data.unavailable === true) return "Ollama assist: unavailable";
+  if (data.used === true) {
+    const returnedItems = data.metadata?.returnedItems;
+    return `Ollama assist: ${typeof returnedItems === "number" ? returnedItems : 0} candidates`;
+  }
+  if (data.enabled === true) return "Ollama assist: skipped";
+
+  return null;
+}
+
+const deleteEmailRoles = new Set(["owner", "admin", "manager", "procurement"]);
+
 export default async function EmailIntakeDetailPage({ params }: PageProps) {
   const { id } = await params;
   const organization = await requireOrganization();
@@ -75,7 +137,7 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
   const { data, error } = await supabase
     .from("email_messages")
     .select(
-      "id, provider, provider_message_id, from_name, from_email, subject, body_preview, body, received_at, has_attachments, classification, is_rfq, rfq_id",
+      "id, provider, provider_message_id, from_name, from_email, subject, body_preview, body, body_text, body_html, received_at, has_attachments, classification, is_rfq, rfq_id",
     )
     .eq("id", id)
     .eq("organization_id", organization.id)
@@ -120,13 +182,14 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
   }
 
   const email = data as EmailMessage;
+  const canDeleteEmail = deleteEmailRoles.has(organization.role);
   const detectedItems = extractRfqItemsFromEmailText(
-    [email.subject, email.body_preview, email.body].filter(Boolean).join("\n"),
+    [email.subject, email.body_preview, email.body_text, email.body].filter(Boolean).join("\n"),
   );
   const attachmentsResponse = await supabase
     .from("email_attachments")
     .select(
-      "id, provider_attachment_id, file_name, content_type, size_bytes, storage_path, ocr_status, extracted_text, extraction_method, extraction_error, extracted_at",
+      "id, provider_attachment_id, file_name, content_type, size_bytes, storage_path, ocr_status, extracted_text, extraction_method, extraction_error, extracted_at, raw_extraction",
     )
     .eq("organization_id", organization.id)
     .eq("email_message_id", email.id)
@@ -202,19 +265,23 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
             >
               Open created RFQ
             </Link>
-            <DeleteEmailIntakeButton
-              emailId={email.id}
-              linkedRfq={true}
-              redirectTo="detail"
-            />
+            {canDeleteEmail ? (
+              <DeleteEmailIntakeButton
+                emailId={email.id}
+                linkedRfq={true}
+                redirectTo="detail"
+              />
+            ) : null}
           </div>
         ) : (
           <div className="mt-4">
-            <DeleteEmailIntakeButton
-              emailId={email.id}
-              linkedRfq={false}
-              redirectTo="detail"
-            />
+            {canDeleteEmail ? (
+              <DeleteEmailIntakeButton
+                emailId={email.id}
+                linkedRfq={false}
+                redirectTo="detail"
+              />
+            ) : null}
           </div>
         )}
       </Card>
@@ -295,6 +362,8 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
           <div className="divide-y divide-slate-200">
             {attachments.map((attachment) => {
               const method = attachment.extraction_method || "Not extracted";
+              const pagesProcessed = extractionPages(attachment.raw_extraction);
+              const ollamaLabel = ollamaAssistLabel(attachment.raw_extraction);
               return (
                 <div key={attachment.id} className="space-y-4 px-5 py-5">
                   <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-start">
@@ -315,6 +384,16 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
                         <span className="rounded-md bg-slate-100 px-2.5 py-1">
                           Method: {labelize(method)}
                         </span>
+                        {pagesProcessed ? (
+                          <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                            Pages processed: {pagesProcessed}
+                          </span>
+                        ) : null}
+                        {ollamaLabel ? (
+                          <span className="rounded-md bg-slate-100 px-2.5 py-1">
+                            {ollamaLabel}
+                          </span>
+                        ) : null}
                       </div>
                       {attachment.extraction_method === "image_ocr" ? (
                         <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
@@ -326,7 +405,8 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
                           {attachment.extraction_error}
                         </p>
                       ) : null}
-                      {attachment.extraction_error?.includes("No readable PDF text found") ? (
+                      {attachment.extraction_error?.includes("No readable PDF text found") ||
+                      attachment.extraction_error?.includes("scanned or image-based") ? (
                         <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-800">
                           This PDF may be scanned or image-based. Upload an image version or use scanned PDF OCR when available.
                         </p>
@@ -353,7 +433,7 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
       <Card className="p-6">
         <h2 className="text-lg font-semibold text-slate-950">Email body</h2>
         <div className="mt-4 whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
-          {email.body || email.body_preview || "No email body was logged."}
+          {emailBody(email)}
         </div>
       </Card>
     </div>

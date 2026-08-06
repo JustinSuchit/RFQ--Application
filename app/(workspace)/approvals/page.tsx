@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { requireOrganization } from "@/lib/auth/session";
+import { formatTaxRate } from "@/lib/quotes/calculations";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -22,6 +23,12 @@ type ApprovalRequest = {
 type CustomerQuoteRow = {
   id: string;
   quote_number: string;
+  subtotal: number | null;
+  discount: number | null;
+  tax_rate: number | null;
+  tax_amount: number | null;
+  tax: number | null;
+  delivery_fee: number | null;
   total: number | null;
   rfq_id: string;
   rfqs:
@@ -95,6 +102,16 @@ function formatUser(value: string | null) {
   return value ? value.slice(0, 8) : "Not set";
 }
 
+function quoteTaxAmount(quote: CustomerQuoteRow | undefined | null) {
+  return Number(quote?.tax_amount ?? quote?.tax ?? 0);
+}
+
+function quoteTaxRateLabel(quote: CustomerQuoteRow | undefined | null) {
+  const taxRate = Number(quote?.tax_rate ?? 0);
+  if (taxRate === 0 && quoteTaxAmount(quote) > 0) return "Not set";
+  return formatTaxRate(taxRate);
+}
+
 export default async function ApprovalsPage({ searchParams }: PageProps) {
   const organization = await requireOrganization();
   const supabase = await createClient();
@@ -138,7 +155,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
       ? supabase
           .from("customer_quotes")
           .select(
-            "id, quote_number, total, rfq_id, rfqs(id, rfq_number, customers(company_name))",
+            "id, quote_number, subtotal, discount, tax_rate, tax_amount, tax, delivery_fee, total, rfq_id, rfqs(id, rfq_number, customers(company_name))",
           )
           .eq("organization_id", organization.id)
           .in("id", quoteIds)
@@ -217,6 +234,10 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                   <th className="px-5 py-3">Quote number</th>
                   <th className="px-5 py-3">RFQ number</th>
                   <th className="px-5 py-3">Customer</th>
+                  <th className="px-5 py-3 text-right">Subtotal</th>
+                  <th className="px-5 py-3 text-right">Discount</th>
+                  <th className="px-5 py-3 text-right">Tax</th>
+                  <th className="px-5 py-3 text-right">Delivery</th>
                   <th className="px-5 py-3 text-right">Quote total</th>
                   <th className="px-5 py-3">Approval rule</th>
                   <th className="px-5 py-3">Requested by</th>
@@ -243,6 +264,21 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                         {customer?.company_name ?? "No customer"}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-950">
+                        {formatCurrency(quote?.subtotal ?? null, organization.currency)}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-950">
+                        {formatCurrency(quote?.discount ?? null, organization.currency)}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-950">
+                        {formatCurrency(quoteTaxAmount(quote), organization.currency)}
+                        <span className="mt-1 block text-xs font-medium text-slate-500">
+                          {quoteTaxRateLabel(quote)}
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-950">
+                        {formatCurrency(quote?.delivery_fee ?? null, organization.currency)}
                       </td>
                       <td className="whitespace-nowrap px-5 py-4 text-right font-semibold text-slate-950">
                         {formatCurrency(quote?.total ?? null, organization.currency)}

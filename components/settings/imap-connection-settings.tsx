@@ -20,7 +20,16 @@ export type ImapConnection = {
   only_unread: boolean | null;
   is_active: boolean | null;
   last_uid: number | null;
+  last_processed_uid: number | null;
+  last_uid_validity: number | null;
   last_scan_at: string | null;
+  auto_scan_enabled: boolean | null;
+  scan_interval_minutes: number | null;
+  next_scan_at: string | null;
+  last_scan_status: string | null;
+  last_scan_error: string | null;
+  scan_in_progress: boolean | null;
+  scan_started_at: string | null;
 };
 
 type Props = {
@@ -36,7 +45,10 @@ type ScanSummary = {
   likelyRfq: number;
   possibleRfq: number;
   skippedNotRfq: number;
+  duplicates: number;
   highestUid: number | null;
+  folder?: string;
+  trigger?: "manual" | "scheduled";
 };
 type ImapFailureResult = {
   success?: boolean;
@@ -154,6 +166,9 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
   const [scanFolder, setScanFolder] = useState(connection?.scan_folder ?? "INBOX");
   const [onlyUnread, setOnlyUnread] = useState(connection?.only_unread ?? false);
   const [isActive, setIsActive] = useState(connection?.is_active ?? true);
+  const [autoScanEnabled, setAutoScanEnabled] = useState(
+    connection?.auto_scan_enabled ?? false,
+  );
   const [testState, setTestState] = useState<RequestState>("idle");
   const [testMessage, setTestMessage] = useState("");
   const [testDiagnostics, setTestDiagnostics] =
@@ -168,6 +183,9 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
     if (!connection) return "Not configured";
     return connection.is_active ? "Active" : "Inactive";
   }, [connection]);
+  const scanStatus = connection?.scan_in_progress
+    ? "running"
+    : connection?.last_scan_status;
   const canRunImapActions = Boolean(connection && connection.is_active);
 
   useEffect(() => {
@@ -263,13 +281,16 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
         likelyRfq: result.likelyRfq ?? 0,
         possibleRfq: result.possibleRfq ?? 0,
         skippedNotRfq: result.skippedNotRfq ?? 0,
+        duplicates: result.duplicates ?? 0,
         highestUid: result.highestUid ?? null,
+        folder: result.folder,
+        trigger: result.trigger,
       };
 
       setScanState("success");
       setScanSummary(summary);
       setScanMessage(
-        `Scan complete. Imported ${summary.insertedOrUpdated} RFQ-related emails. Skipped ${summary.skippedNotRfq} non-RFQ emails.`,
+        `Scan complete. Imported ${summary.insertedOrUpdated} RFQ-related emails. Skipped ${summary.skippedNotRfq} non-RFQ emails. Duplicates ignored: ${summary.duplicates}.`,
       );
     } catch (error) {
       setScanState("error");
@@ -299,13 +320,41 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
           </div>
           <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm">
             <p className="font-semibold text-slate-950">Status: {status}</p>
+            <p className="mt-1 text-slate-600">
+              Auto scan: {connection?.auto_scan_enabled ? "Hourly" : "Off"}
+            </p>
             {connection?.last_scan_at ? (
               <p className="mt-1 text-slate-600">
                 Last scan: {formatDateTime(connection.last_scan_at)}
               </p>
             ) : null}
+            {connection?.next_scan_at ? (
+              <p className="mt-1 text-slate-600">
+                Next scan: {formatDateTime(connection.next_scan_at)}
+              </p>
+            ) : null}
+            {scanStatus ? (
+              <p className="mt-1 capitalize text-slate-600">
+                Scan status: {scanStatus}
+              </p>
+            ) : null}
             {connection?.last_uid ? (
               <p className="mt-1 text-slate-600">Last UID: {connection.last_uid}</p>
+            ) : null}
+            {connection?.last_processed_uid ? (
+              <p className="mt-1 text-slate-600">
+                Last processed UID: {connection.last_processed_uid}
+              </p>
+            ) : null}
+            {connection?.last_uid_validity ? (
+              <p className="mt-1 text-slate-600">
+                UID validity: {connection.last_uid_validity}
+              </p>
+            ) : null}
+            {connection?.last_scan_error ? (
+              <p className="mt-2 max-w-sm break-words text-rose-700">
+                Last error: {connection.last_scan_error}
+              </p>
             ) : null}
           </div>
         </div>
@@ -449,6 +498,25 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
               />
               Active
             </label>
+            <input
+              type="hidden"
+              name="scanIntervalMinutes"
+              value={connection?.scan_interval_minutes ?? 60}
+            />
+            <label className="flex items-center gap-3 text-sm font-semibold text-slate-700">
+              <input
+                name="autoScanEnabled"
+                type="checkbox"
+                checked={autoScanEnabled}
+                onChange={(event) => setAutoScanEnabled(event.target.checked)}
+                disabled={!canManage}
+                className={checkboxClass}
+              />
+              Automatically scan hourly
+            </label>
+            <p className="text-xs leading-5 text-slate-500">
+              Scheduled scans run every 60 minutes for the active IMAP mailbox.
+            </p>
           </div>
         </div>
 
@@ -566,6 +634,16 @@ export function ImapConnectionSettings({ connection, canManage }: Props) {
                       <dt className="text-teal-700">Updated</dt>
                       <dd className="font-semibold">
                         {scanSummary.insertedOrUpdated}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-teal-700">Duplicates ignored</dt>
+                      <dd className="font-semibold">{scanSummary.duplicates}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-teal-700">Folder</dt>
+                      <dd className="font-semibold">
+                        {scanSummary.folder ?? scanFolder}
                       </dd>
                     </div>
                     <div>

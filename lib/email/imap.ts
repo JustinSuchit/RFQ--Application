@@ -1,9 +1,9 @@
 import { ImapFlow, type MailboxObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import { classifyRfqEmail, type RfqClassification } from "@/lib/email/rfq-classifier";
-import { createClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+export type SupabaseClientLike = SupabaseClient;
 
 export type ImapConnectionRow = {
   id: string;
@@ -18,7 +18,11 @@ export type ImapConnectionRow = {
   scan_folder: string | null;
   only_unread: boolean | null;
   last_uid: number | null;
+  last_processed_uid?: number | null;
+  last_uid_validity?: number | null;
   last_scan_at: string | null;
+  auto_scan_enabled?: boolean | null;
+  scan_interval_minutes?: number | null;
   is_active: boolean | null;
 };
 
@@ -35,7 +39,10 @@ export type ImapScanSummary = {
   likelyRfq: number;
   possibleRfq: number;
   skippedNotRfq: number;
+  duplicates: number;
   highestUid: number | null;
+  uidValidity: number | null;
+  folder: string;
 };
 
 type ParsedScannedMessage = {
@@ -45,6 +52,8 @@ type ParsedScannedMessage = {
   fromName: string | null;
   subject: string;
   bodyPreview: string;
+  bodyText: string | null;
+  bodyHtml: string | null;
   receivedAt: string;
   hasAttachments: boolean;
   attachmentCount: number;
@@ -207,16 +216,16 @@ async function connectAndOpenMailbox(connection: ImapConnectionRow) {
 }
 
 export async function getActiveImapConnectionForOrganization(
-  supabase: SupabaseClient,
+  supabase: SupabaseClientLike,
   organizationId: string,
 ) {
   const { data, error } = await supabase
     .from("email_connections")
     .select(
-      "id, organization_id, provider, mailbox_email, imap_host, imap_port, imap_secure, imap_username, imap_password_encrypted, scan_folder, only_unread, last_uid, last_scan_at, is_active",
+      "id, organization_id, provider, mailbox_email, imap_host, imap_port, imap_secure, imap_username, imap_password_encrypted, scan_folder, only_unread, last_uid, last_processed_uid, last_uid_validity, last_scan_at, auto_scan_enabled, scan_interval_minutes, is_active",
     )
     .eq("organization_id", organizationId)
-    .eq("provider", "imap")
+    .in("provider", ["imap", "custom_imap"])
     .eq("is_active", true)
     .maybeSingle();
 
@@ -297,7 +306,7 @@ function latestUids(uids: number[], limit: number) {
 }
 
 async function getUidsToScan(client: ImapFlow, connection: ImapConnectionRow) {
-  const lastUid = connection.last_uid ?? null;
+  const lastUid = connection.last_processed_uid ?? connection.last_uid ?? null;
   const baseQuery = connection.only_unread ? { seen: false } : { all: true };
   const searchResult = await client.search(
     lastUid
@@ -306,7 +315,7 @@ async function getUidsToScan(client: ImapFlow, connection: ImapConnectionRow) {
     { uid: true },
   );
   const uids = Array.isArray(searchResult) ? searchResult : [];
-  const filtered = lastUid ? uids.filter((uid) => uid > lastUid) : latestUids(uids, 25);
+  const filtered = lastUid ? uids.filter((uid) => uid > lastUid) : latestUids(uids, 50);
 
   return filtered.sort((left, right) => left - right);
 }
@@ -322,6 +331,7 @@ async function parseScannedMessage(
   const fromName = firstSender?.name || null;
   const subject = parsed.subject || "(No subject)";
   const rawBody = parsed.text || "";
+  const rawHtml = typeof parsed.html === "string" ? parsed.html : null;
   const bodyPreview = rawBody.replace(/\s+/g, " ").trim().slice(0, 1000);
   const attachments = parsed.attachments ?? [];
   let classification;
@@ -343,6 +353,8 @@ async function parseScannedMessage(
     fromName,
     subject,
     bodyPreview,
+    bodyText: rawBody.trim() || null,
+    bodyHtml: rawHtml,
     receivedAt: (parsed.date ?? new Date()).toISOString(),
     hasAttachments: attachments.length > 0,
     attachmentCount: attachments.length,
@@ -353,22 +365,35 @@ async function parseScannedMessage(
 }
 
 export async function scanImapInbox(
-  supabase: SupabaseClient,
+  supabase: SupabaseClientLike,
   connection: ImapConnectionRow,
 ): Promise<ImapScanSummary> {
   const { client, mailbox, mailboxName } = await connectAndOpenMailbox(connection);
 
   try {
+    const uidValidityValue = (mailbox as { uidValidity?: unknown; uidvalidity?: unknown }).uidValidity ??
+      (mailbox as { uidValidity?: unknown; uidvalidity?: unknown }).uidvalidity;
+    const uidValidity = uidValidityValue ? Number(uidValidityValue) : null;
+    const uidValidityChanged =
+      Boolean(connection.last_uid_validity && uidValidity) &&
+      Number(connection.last_uid_validity) !== Number(uidValidity);
+    const scanConnection = uidValidityChanged
+      ? { ...connection, last_uid: null, last_processed_uid: null }
+      : connection;
+
     if (mailbox.exists === 0) {
       throw new Error("Mailbox has no messages.");
     }
 
-    const uids = await getUidsToScan(client, connection);
+    const uids = await getUidsToScan(client, scanConnection);
 
     if (uids.length === 0) {
       await supabase
         .from("email_connections")
-        .update({ last_scan_at: new Date().toISOString() })
+        .update({
+          last_scan_at: new Date().toISOString(),
+          last_uid_validity: uidValidity,
+        })
         .eq("id", connection.id)
         .eq("organization_id", connection.organization_id);
 
@@ -378,7 +403,10 @@ export async function scanImapInbox(
         likelyRfq: 0,
         possibleRfq: 0,
         skippedNotRfq: 0,
-        highestUid: connection.last_uid ?? null,
+        duplicates: 0,
+        highestUid: connection.last_processed_uid ?? connection.last_uid ?? null,
+        uidValidity,
+        folder: mailboxName,
       };
     }
 
@@ -390,21 +418,31 @@ export async function scanImapInbox(
       { uid: true },
     )) {
       if (message.source) {
-        scannedMessages.push(
-          await parseScannedMessage(message.uid, message.source, message.flags),
-        );
+        try {
+          scannedMessages.push(
+            await parseScannedMessage(message.uid, message.source, message.flags),
+          );
+        } catch (error) {
+          console.warn("IMAP message parse failed", {
+            uid: message.uid,
+            error: getErrorMessage(error),
+          });
+        }
       }
     }
 
+    const checkpointBase = connection.last_processed_uid ?? connection.last_uid ?? 0;
     const highestUid = scannedMessages.reduce(
       (currentHighest, message) => Math.max(currentHighest, message.uid),
-      connection.last_uid ?? 0,
+      checkpointBase,
     );
+    const nextProcessedUid = highestUid || checkpointBase || null;
 
     let insertedOrUpdated = 0;
     let likelyRfq = 0;
     let possibleRfq = 0;
     let skippedNotRfq = 0;
+    let duplicates = 0;
 
     for (const message of scannedMessages) {
       if (message.classification === "likely_rfq") likelyRfq += 1;
@@ -414,18 +452,38 @@ export async function scanImapInbox(
         continue;
       }
 
+      const providerMessageId = `imap-${connection.id}-${mailboxName}-${message.uid}`;
+      const { data: existingMessage, error: existingMessageError } = await supabase
+        .from("email_messages")
+        .select("id")
+        .eq("organization_id", connection.organization_id)
+        .eq("email_connection_id", connection.id)
+        .eq("provider_message_id", providerMessageId)
+        .maybeSingle();
+
+      if (existingMessageError) {
+        console.warn("IMAP duplicate lookup failed", existingMessageError.message);
+      }
+
+      if (existingMessage) {
+        duplicates += 1;
+        continue;
+      }
+
       const { error } = await supabase.from("email_messages").upsert(
         {
           organization_id: connection.organization_id,
           provider: "imap",
-          provider_message_id: `imap-${message.uid}`,
+          provider_message_id: providerMessageId,
           email_connection_id: connection.id,
           conversation_id: null,
           from_email: message.fromEmail,
           from_name: message.fromName,
           subject: message.subject,
           body_preview: message.bodyPreview,
-          body: message.bodyPreview,
+          body: message.bodyText ?? message.bodyPreview,
+          body_text: message.bodyText,
+          body_html: message.bodyHtml,
           received_at: message.receivedAt,
           has_attachments: message.hasAttachments,
           matched_keywords: message.matchedKeywords,
@@ -444,7 +502,11 @@ export async function scanImapInbox(
       );
 
       if (error) {
-        throw new Error(error.message);
+        console.warn("IMAP email message save failed", {
+          uid: message.uid,
+          error: error.message,
+        });
+        continue;
       }
 
       insertedOrUpdated += 1;
@@ -453,7 +515,9 @@ export async function scanImapInbox(
     await supabase
       .from("email_connections")
       .update({
-        last_uid: highestUid || connection.last_uid,
+        last_uid: nextProcessedUid,
+        last_processed_uid: nextProcessedUid,
+        last_uid_validity: uidValidity,
         last_scan_at: new Date().toISOString(),
       })
       .eq("id", connection.id)
@@ -465,7 +529,10 @@ export async function scanImapInbox(
       likelyRfq,
       possibleRfq,
       skippedNotRfq,
-      highestUid: highestUid || null,
+      duplicates,
+      highestUid: nextProcessedUid,
+      uidValidity,
+      folder: mailboxName,
     };
   } catch (error) {
     if (error instanceof ImapOperationError) {
