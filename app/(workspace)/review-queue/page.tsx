@@ -1,7 +1,9 @@
-import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
-import { ReviewQueueActions } from "@/components/rfqs/review-queue-actions";
+import {
+  ReviewQueueTable,
+  type ReviewQueueTableRow,
+} from "@/components/review-queue/review-queue-table";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
 import {
   deriveReviewState,
@@ -51,25 +53,6 @@ function param(params: Record<string, string | string[] | undefined>, key: strin
   return Array.isArray(value) ? value[0] ?? "" : value ?? "";
 }
 
-function formatDate(value: string | null) {
-  if (!value) return "Not set";
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatDateTime(value: string | null) {
-  if (!value) return "Not set";
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
 function firstRelated<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
 }
@@ -77,13 +60,6 @@ function firstRelated<T>(value: T | T[] | null) {
 function shortUser(value: string | null) {
   if (!value) return "Unassigned";
   return value.slice(0, 8);
-}
-
-function statusClass(value: string) {
-  if (value === "overdue") return "bg-rose-50 text-rose-700 ring-rose-200";
-  if (value === "ready_to_send") return "bg-teal-50 text-teal-700 ring-teal-200";
-  if (value === "missing_items") return "bg-amber-50 text-amber-800 ring-amber-200";
-  return "bg-slate-100 text-slate-700 ring-slate-200";
 }
 
 const manageRoles = new Set(["owner", "admin", "manager", "procurement"]);
@@ -309,86 +285,18 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
         </form>
       </Card>
 
-      <Card className="overflow-hidden">
-        <div className="max-h-[calc(100vh-280px)] overflow-auto">
-          <table className="w-full table-fixed divide-y divide-slate-200 text-sm max-xl:min-w-[1400px]">
-            <colgroup>
-              <col className="w-[9%]" />
-              <col className="w-[13%]" />
-              <col className="w-[18%]" />
-              <col className="w-[10%]" />
-              <col className="w-[8%]" />
-              <col className="w-[9%]" />
-              <col className="w-[8%]" />
-              <col className="w-[8%]" />
-              <col className="w-[12%]" />
-              <col className="w-[18%]" />
-            </colgroup>
-            <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
-              <tr>
-                {["RFQ number", "Customer", "Subject", "Status", "Priority", "Assigned to", "Created", "Due", "Next action", "Actions"].map((header, index) => (
-                  <th key={header} className={`sticky top-0 z-20 bg-slate-50 px-4 py-3 ${index === 9 ? "right-0 z-30 border-l border-slate-200" : ""}`}>
-                    {header}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 bg-white">
-              {rows.length ? (
-                rows.map((rfq) => {
-                  const customer = firstRelated(rfq.customers);
-                  return (
-                    <tr key={rfq.id} className="group hover:bg-slate-50">
-                      <td className="px-4 py-4 font-semibold text-teal-700">
-                        <Link href={`/rfqs/${rfq.id}`}>{rfq.rfq_number}</Link>
-                      </td>
-                      <td className="truncate px-4 py-4 text-slate-600">{customer?.company_name ?? "No customer"}</td>
-                      <td className="truncate px-4 py-4 font-medium text-slate-950" title={rfq.subject}>{rfq.subject}</td>
-                      <td className="px-4 py-4">
-                        <span className={`rounded-md px-2 py-1 text-xs font-semibold ring-1 ${statusClass(rfq.effectiveReviewStatus)}`}>
-                          {labelizeReviewValue(rfq.effectiveReviewStatus)}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 text-slate-600">{labelizeReviewValue(rfq.effectivePriority)}</td>
-                      <td className="px-4 py-4 text-slate-600">{shortUser(rfq.assigned_to)}</td>
-                      <td className="px-4 py-4 text-slate-600">{formatDate(rfq.created_at)}</td>
-                      <td className="px-4 py-4 text-slate-600">{formatDateTime(rfq.review_due_at)}</td>
-                      <td className="truncate px-4 py-4 text-slate-600" title={rfq.effectiveNextAction}>{rfq.effectiveNextAction}</td>
-                      <td className="sticky right-0 border-l border-slate-100 bg-white px-3 py-3 group-hover:bg-slate-50">
-                        <div className="space-y-2">
-                          <Link
-                            href={`/rfqs/${rfq.id}`}
-                            className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700"
-                          >
-                            Open RFQ
-                          </Link>
-                          <ReviewQueueActions
-                            rfqId={rfq.id}
-                            assignedTo={rfq.assigned_to}
-                            reviewStatus={rfq.effectiveReviewStatus}
-                            priority={rfq.effectivePriority}
-                            reviewDueAt={rfq.review_due_at}
-                            nextAction={rfq.effectiveNextAction}
-                            members={members}
-                            canManage={canManage}
-                            compact
-                          />
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td colSpan={10}>
-                    <EmptyState title="No RFQs match this queue" description="Adjust filters or create an RFQ from Email Intake." />
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+      {rows.length ? (
+        <ReviewQueueTable
+          key={JSON.stringify({ scope, statusFilter, priorityFilter, customerFilter, assignedFilter, dueFilter, search })}
+          rows={rows as ReviewQueueTableRow[]}
+          members={members}
+          canManage={canManage}
+        />
+      ) : (
+        <Card>
+          <EmptyState title="No RFQs match this queue" description="Adjust filters or create an RFQ from Email Intake." />
+        </Card>
+      )}
     </div>
   );
 }

@@ -132,11 +132,26 @@ export async function updateReviewFieldsAction(
   const priority = normalizeReviewPriority(text(formData, "priority"));
   const reviewDueAt = text(formData, "reviewDueAt");
   const nextAction = text(formData, "nextAction") || null;
+  const assignedTo = text(formData, "assignedTo") || null;
   const supabase = await createClient();
 
   if (!rfqId) return { error: "RFQ id is required." };
   if (!reviewStatuses.includes(reviewStatus)) return { error: "Invalid review status." };
   if (!reviewPriorities.includes(priority)) return { error: "Invalid priority." };
+
+  if (assignedTo) {
+    const { data: member, error: memberError } = await supabase
+      .from("organization_members")
+      .select("user_id")
+      .eq("organization_id", organization.id)
+      .eq("user_id", assignedTo)
+      .eq("status", "active")
+      .maybeSingle();
+
+    if (memberError || !member) {
+      return { error: memberError?.message ?? "Assigned user is not an active organization member." };
+    }
+  }
 
   const rfq = await loadRfq(supabase, organization.id, rfqId);
   if (!rfq) return { error: "RFQ was not found." };
@@ -144,6 +159,7 @@ export async function updateReviewFieldsAction(
   const { error: updateError } = await supabase
     .from("rfqs")
     .update({
+      assigned_to: assignedTo,
       review_status: reviewStatus,
       priority,
       review_due_at: reviewDueAt ? new Date(reviewDueAt).toISOString() : null,
@@ -166,11 +182,13 @@ export async function updateReviewFieldsAction(
       new_review_status: reviewStatus,
       old_priority: rfq.priority,
       new_priority: priority,
+      old_assigned_to: rfq.assigned_to,
+      new_assigned_to: assignedTo,
     },
   });
   revalidatePath("/review-queue");
   revalidatePath(`/rfqs/${rfqId}`);
-  return { error: "", success: "RFQ review fields updated." };
+  return { error: "", success: `${rfq.rfq_number} updated.` };
 }
 
 export async function markReviewedAction(
