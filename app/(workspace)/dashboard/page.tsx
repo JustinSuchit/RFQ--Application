@@ -77,6 +77,8 @@ export default async function DashboardPage() {
     supplierPricingRfqs,
     pendingApprovalQuotes,
     monthlyQuotes,
+    imapConnectionResponse,
+    recentScanRunsResponse,
     recentRfqsResponse,
     activityResponse,
   ] = await Promise.all([
@@ -104,6 +106,19 @@ export default async function DashboardPage() {
       .select("total")
       .eq("organization_id", organization.id)
       .gte("created_at", startOfMonthIso()),
+    supabase
+      .from("email_connections")
+      .select("last_scan_status, last_scan_at, auto_scan_enabled, next_scan_at")
+      .eq("organization_id", organization.id)
+      .in("provider", ["imap", "custom_imap"])
+      .eq("is_active", true)
+      .maybeSingle(),
+    supabase
+      .from("email_scan_runs")
+      .select("status, completed_at, started_at")
+      .eq("organization_id", organization.id)
+      .order("started_at", { ascending: false })
+      .limit(5),
     supabase
       .from("rfqs")
       .select(
@@ -162,8 +177,16 @@ export default async function DashboardPage() {
     supplierPricingRfqs.error ??
     pendingApprovalQuotes.error ??
     monthlyQuotes.error ??
+    imapConnectionResponse.error ??
+    recentScanRunsResponse.error ??
     recentRfqsResponse.error ??
     activityResponse.error;
+  const recentScanRuns = recentScanRunsResponse.data ?? [];
+  const lastScanFailed = imapConnectionResponse.data?.last_scan_status === "failed";
+  const repeatedFailures = recentScanRuns.filter((run) => run.status === "failed").length >= 3;
+  const noNextScan =
+    imapConnectionResponse.data?.auto_scan_enabled && !imapConnectionResponse.data?.next_scan_at;
+  const mailboxHealth = lastScanFailed || repeatedFailures ? "Failed" : noNextScan ? "Warning" : "Healthy";
 
   return (
     <div className="space-y-6">
@@ -185,6 +208,21 @@ export default async function DashboardPage() {
       ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <Link href="/settings/email/monitoring" className="block">
+          <Card className="p-5 transition hover:border-teal-200 hover:shadow-sm">
+            <p className="text-sm font-medium text-slate-500">Mailbox health</p>
+            <p className={`mt-3 text-3xl font-semibold ${
+              mailboxHealth === "Healthy"
+                ? "text-teal-700"
+                : mailboxHealth === "Failed"
+                  ? "text-rose-700"
+                  : "text-amber-700"
+            }`}>
+              {mailboxHealth}
+            </p>
+            <p className="mt-1 text-sm text-slate-500">Open Scan Monitoring</p>
+          </Card>
+        </Link>
         {dashboardMetrics.map((metric) => (
           <Card key={metric.label} className="p-5">
             <p className="text-sm font-medium text-slate-500">

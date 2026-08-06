@@ -9,6 +9,27 @@ type OrganizationPdfData = {
   quote_footer_text?: string | null;
 };
 
+export type QuotePdfSettingsData = {
+  company_name?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  email?: string | null;
+  website?: string | null;
+  accent_color?: string | null;
+  footer_text?: string | null;
+  terms?: string | null;
+  show_taxable_subtotal?: boolean | null;
+  show_discount?: boolean | null;
+  show_delivery?: boolean | null;
+  show_item_numbers?: boolean | null;
+  show_quote_status?: boolean | null;
+  show_approval_status?: boolean | null;
+  show_notes?: boolean | null;
+  currency_position?: "prefix" | "suffix" | string | null;
+  page_size?: "A4" | "Letter" | string | null;
+  template?: "professional" | "compact" | string | null;
+};
+
 type CustomerPdfData = {
   company_name: string | null;
   contact_name: string | null;
@@ -53,6 +74,7 @@ export type CustomerQuotePdfInput = {
   rfq: RfqPdfData;
   quote: QuotePdfData;
   items: QuoteItemPdfData[];
+  settings?: QuotePdfSettingsData | null;
 };
 
 type PdfFont = "regular" | "bold";
@@ -141,7 +163,11 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-export function formatMoneyForPdf(amount: number | null | undefined, currency = "TTD") {
+export function formatMoneyForPdf(
+  amount: number | null | undefined,
+  currency = "TTD",
+  position: "prefix" | "suffix" | string | null | undefined = "prefix",
+) {
   const safeCurrency = String(currency || "TTD")
     .replace(/[^\w]/g, "")
     .toUpperCase()
@@ -151,7 +177,7 @@ export function formatMoneyForPdf(amount: number | null | undefined, currency = 
     maximumFractionDigits: 2,
   });
 
-  return `${safeCurrency} ${safeAmount}`;
+  return position === "suffix" ? `${safeAmount} ${safeCurrency}` : `${safeCurrency} ${safeAmount}`;
 }
 
 function savedTaxAmount(quote: QuotePdfData) {
@@ -377,7 +403,14 @@ class PdfLayout {
 
 function drawHeader(layout: PdfLayout, input: CustomerQuotePdfInput, currency: string) {
   const { organization, quote, rfq } = input;
-  const orgName = sanitizeText(organization.name, "Amcol Group");
+  const settings = input.settings;
+  const orgName = sanitizeText(settings?.company_name || organization.name, "Amcol Group");
+  const contactLines = [
+    settings?.address,
+    settings?.phone ? `Phone: ${settings.phone}` : null,
+    settings?.email ? `Email: ${settings.email}` : null,
+    settings?.website,
+  ].filter(Boolean) as string[];
   const countryCurrency = [organization.country, currency].filter(Boolean).join(" / ");
 
   layout.rect(0, pageHeight - 118, pageWidth, 118, { fill: "#f8fafc" });
@@ -385,9 +418,9 @@ function drawHeader(layout: PdfLayout, input: CustomerQuotePdfInput, currency: s
   layout.textAt(orgName, margin, 736, { font: "bold", size: 18, color: "#0f172a" });
   layout.textAt(countryCurrency || currency, margin, 718, { size: 10, color: "#475569" });
 
-  const headerText = sanitizeText(organization.quote_header_text, "");
+  const headerText = sanitizeText(contactLines.join(" | ") || organization.quote_header_text, "");
   if (headerText) {
-    const headerLines = wrapText(headerText, 230, 8).slice(0, 2);
+    const headerLines = wrapText(headerText, 250, 8).slice(0, 3);
     headerLines.forEach((line, index) => {
       layout.textAt(line, margin, 700 - index * 11, { size: 8, color: "#64748b" });
     });
@@ -426,15 +459,19 @@ function drawInfoBoxes(layout: PdfLayout, input: CustomerQuotePdfInput) {
   layout.textAt("QUOTE DETAILS", rightX + 12, boxTop - 20, { font: "bold", size: 9, color: layout.brandColor });
   layout.textAt(`Subject: ${sanitizeText(input.rfq.subject)}`, rightX + 12, boxTop - 40, { size: 8, color: "#475569" });
   layout.textAt(`Revision: ${input.quote.revision}`, rightX + 12, boxTop - 56, { size: 8, color: "#475569" });
-  layout.textAt(`Status: ${labelize(input.quote.status)}`, rightX + 12, boxTop - 70, { size: 8, color: "#475569" });
-  layout.textAt(`Approval: ${labelize(input.quote.approval_status)}`, rightX + 12, boxTop - 84, { size: 8, color: "#475569" });
+  const showQuoteStatus = input.settings?.show_quote_status !== false;
+  const showApprovalStatus = input.settings?.show_approval_status !== false;
+  layout.textAt(showQuoteStatus ? `Status: ${labelize(input.quote.status)}` : "Status: Hidden", rightX + 12, boxTop - 70, { size: 8, color: "#475569" });
+  layout.textAt(showApprovalStatus ? `Approval: ${labelize(input.quote.approval_status)}` : "Approval: Hidden", rightX + 12, boxTop - 84, { size: 8, color: "#475569" });
   layout.setY(boxTop - boxHeight - 26);
 }
 
-function drawTableHeader(layout: PdfLayout) {
+function drawTableHeader(layout: PdfLayout, input?: CustomerQuotePdfInput) {
   const y = layout.currentY();
   layout.rect(margin, y - 24, tableWidth, 24, { fill: "#eef2f7", stroke: "#d8dee8" });
   for (const column of tableColumns()) {
+    if (column.key === "no" && input?.settings?.show_item_numbers === false) continue;
+    if (column.key === "discount" && input?.settings?.show_discount === false) continue;
     layout.textAt(column.label, cellTextX(column), y - 15, {
       align: column.align,
       font: "bold",
@@ -445,9 +482,10 @@ function drawTableHeader(layout: PdfLayout) {
   layout.setY(y - 24);
 }
 
-function drawItemsTable(layout: PdfLayout, items: QuoteItemPdfData[], currency: string) {
+function drawItemsTable(layout: PdfLayout, input: CustomerQuotePdfInput, currency: string) {
+  const items = input.items;
   layout.sectionTitle("Quote Items");
-  drawTableHeader(layout);
+  drawTableHeader(layout, input);
 
   if (items.length === 0) {
     const y = layout.currentY();
@@ -471,15 +509,17 @@ function drawItemsTable(layout: PdfLayout, items: QuoteItemPdfData[], currency: 
 
     layout.ensureSpace(rowHeight + 30);
     if (layout.currentY() > pageHeight - margin - 6) {
-      drawTableHeader(layout);
+      drawTableHeader(layout, input);
     }
 
     const y = layout.currentY();
     layout.rect(margin, y - rowHeight, tableWidth, rowHeight, { fill: "#ffffff", stroke: "#d8dee8" });
-    layout.textAt(String(index + 1), cellTextX(noColumn), y - 18, {
-      align: noColumn.align,
-      size: 8.5,
-    });
+    if (input.settings?.show_item_numbers !== false) {
+      layout.textAt(String(index + 1), cellTextX(noColumn), y - 18, {
+        align: noColumn.align,
+        size: 8.5,
+      });
+    }
     descriptionLines.forEach((line, lineIndex) => {
       layout.textAt(line, cellTextX(descriptionColumn), y - 18 - lineIndex * 11, { size: 8.5 });
     });
@@ -491,15 +531,17 @@ function drawItemsTable(layout: PdfLayout, items: QuoteItemPdfData[], currency: 
     });
 
     layout.textAt(String(item.quantity ?? 0), cellTextX(qtyColumn), y - 18, { align: qtyColumn.align, size: 8.5 });
-    layout.textAt(formatMoneyForPdf(item.unit_price, currency), cellTextX(unitPriceColumn), y - 18, {
+    layout.textAt(formatMoneyForPdf(item.unit_price, currency, input.settings?.currency_position), cellTextX(unitPriceColumn), y - 18, {
       align: unitPriceColumn.align,
       size: 8.5,
     });
-    layout.textAt(formatMoneyForPdf(item.discount, currency), cellTextX(discountColumn), y - 18, {
-      align: discountColumn.align,
-      size: 8.5,
-    });
-    layout.textAt(formatMoneyForPdf(item.total_price, currency), cellTextX(totalColumn), y - 18, {
+    if (input.settings?.show_discount !== false) {
+      layout.textAt(formatMoneyForPdf(item.discount, currency, input.settings?.currency_position), cellTextX(discountColumn), y - 18, {
+        align: discountColumn.align,
+        size: 8.5,
+      });
+    }
+    layout.textAt(formatMoneyForPdf(item.total_price, currency, input.settings?.currency_position), cellTextX(totalColumn), y - 18, {
       align: totalColumn.align,
       font: "bold",
       size: 8.5,
@@ -515,14 +557,15 @@ function drawSummary(layout: PdfLayout, input: CustomerQuotePdfInput, currency: 
   const taxableSubtotal = roundCurrency(Math.max(Number(quote.subtotal ?? 0) - Number(quote.discount ?? 0), 0));
   const taxRate = shouldShowTaxRate(quote) ? formatTaxRate(quote.tax_rate) : "Not set";
   const taxLabel = shouldShowTaxRate(quote) ? `Tax (${formatTaxRate(quote.tax_rate)})` : "Tax amount";
+  const currencyPosition = input.settings?.currency_position;
   const rows = [
-    ["Subtotal", formatMoneyForPdf(quote.subtotal, currency)],
-    ["Discount", formatMoneyForPdf(quote.discount, currency)],
-    ["Taxable subtotal", formatMoneyForPdf(taxableSubtotal, currency)],
+    ["Subtotal", formatMoneyForPdf(quote.subtotal, currency, currencyPosition)],
+    input.settings?.show_discount === false ? null : ["Discount", formatMoneyForPdf(quote.discount, currency, currencyPosition)],
+    input.settings?.show_taxable_subtotal === false ? null : ["Taxable subtotal", formatMoneyForPdf(taxableSubtotal, currency, currencyPosition)],
     ["Tax rate", taxRate],
-    [taxLabel, formatMoneyForPdf(savedTaxAmount(quote), currency)],
-    ["Delivery", formatMoneyForPdf(quote.delivery_fee, currency)],
-  ];
+    [taxLabel, formatMoneyForPdf(savedTaxAmount(quote), currency, currencyPosition)],
+    input.settings?.show_delivery === false ? null : ["Delivery", formatMoneyForPdf(quote.delivery_fee, currency, currencyPosition)],
+  ].filter((row): row is string[] => Boolean(row));
   const boxWidth = 252;
   const boxX = pageWidth - margin - boxWidth;
   const boxHeight = 146;
@@ -540,7 +583,7 @@ function drawSummary(layout: PdfLayout, input: CustomerQuotePdfInput, currency: 
 
   layout.line(boxX + 12, top - 121, boxX + boxWidth - 12, top - 121);
   layout.textAt("Grand total", boxX + 14, top - 137, { font: "bold", size: 11 });
-  layout.textAt(formatMoneyForPdf(quote.total, currency), boxX + boxWidth - 14, top - 137, {
+  layout.textAt(formatMoneyForPdf(quote.total, currency, currencyPosition), boxX + boxWidth - 14, top - 137, {
     align: "right",
     font: "bold",
     size: 12,
@@ -552,7 +595,7 @@ function drawSummary(layout: PdfLayout, input: CustomerQuotePdfInput, currency: 
 
 function drawNotes(layout: PdfLayout, input: CustomerQuotePdfInput) {
   const notes = sanitizeText(input.quote.notes, "");
-  if (!notes) return;
+  if (!notes || input.settings?.show_notes !== true) return;
 
   const lines = wrapText(notes, bodyWidth - 24, 8.5);
   const height = 32 + lines.length * 11;
@@ -569,7 +612,7 @@ function drawNotes(layout: PdfLayout, input: CustomerQuotePdfInput) {
 function addFooters(layout: PdfLayout, input: CustomerQuotePdfInput) {
   const pages = layout.getPages();
   const footerText =
-    sanitizeText(input.organization.quote_footer_text, "") ||
+    sanitizeText(input.settings?.footer_text || input.organization.quote_footer_text, "") ||
     `This quotation is valid until ${formatDate(input.quote.valid_until)}.`;
 
   pages.forEach((page, index) => {
@@ -634,11 +677,13 @@ function renderPdf(pages: PdfPage[]) {
 
 export function generateCustomerQuotePdf(input: CustomerQuotePdfInput) {
   const currency = input.organization.currency || "TTD";
-  const layout = new PdfLayout(safeBrandColor(input.organization.brand_color));
+  const layout = new PdfLayout(safeBrandColor(input.settings?.accent_color || input.organization.brand_color));
 
   drawHeader(layout, input, currency);
-  drawInfoBoxes(layout, input);
-  drawItemsTable(layout, input.items, currency);
+  if (input.settings?.template !== "compact") {
+    drawInfoBoxes(layout, input);
+  }
+  drawItemsTable(layout, input, currency);
   drawSummary(layout, input, currency);
   drawNotes(layout, input);
   addFooters(layout, input);

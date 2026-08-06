@@ -34,6 +34,10 @@ type CustomerQuoteFormProps = {
   taxRate: number;
   defaultValidUntil: string;
   defaultMarkupPercentage: number;
+  defaultPdfFooterNote: string;
+  defaultPdfTerms: string;
+  defaultPdfShowNotes: boolean;
+  defaultPdfTemplate: string;
 };
 
 const inputClass =
@@ -61,6 +65,10 @@ export function CustomerQuoteForm({
   taxRate,
   defaultValidUntil,
   defaultMarkupPercentage,
+  defaultPdfFooterNote,
+  defaultPdfTerms,
+  defaultPdfShowNotes,
+  defaultPdfTemplate,
 }: CustomerQuoteFormProps) {
   const [state, formAction, pending] = useActionState(
     createCustomerQuoteAction,
@@ -184,6 +192,30 @@ export function CustomerQuoteForm({
           <label className="md:col-span-2 text-sm font-semibold text-slate-700">
             Terms and conditions
             <textarea name="terms" className={textareaClass} />
+          </label>
+          <label className="text-sm font-semibold text-slate-700">
+            PDF template override
+            <select name="pdfTemplate" defaultValue={defaultPdfTemplate} className={inputClass}>
+              <option value="professional">Professional</option>
+              <option value="compact">Compact</option>
+            </select>
+          </label>
+          <label className="flex items-end gap-2 pb-2 text-sm font-semibold text-slate-700">
+            <input
+              name="pdfShowNotes"
+              type="checkbox"
+              defaultChecked={defaultPdfShowNotes}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Show notes on PDF
+          </label>
+          <label className="md:col-span-2 text-sm font-semibold text-slate-700">
+            PDF footer note override
+            <textarea name="pdfFooterNote" defaultValue={defaultPdfFooterNote} className={textareaClass} />
+          </label>
+          <label className="md:col-span-2 text-sm font-semibold text-slate-700">
+            PDF terms override
+            <textarea name="pdfTerms" defaultValue={defaultPdfTerms} className={textareaClass} />
           </label>
         </div>
       </div>

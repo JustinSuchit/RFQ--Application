@@ -15,8 +15,10 @@ import {
 } from "@/components/rfqs/original-email-section";
 import { StatusControl } from "@/components/rfqs/status-control";
 import { ExtractItemsButton } from "@/components/rfqs/extract-items-button";
+import { ReviewQueueActions } from "@/components/rfqs/review-queue-actions";
 import { requireOrganization } from "@/lib/auth/session";
 import { formatTaxRate } from "@/lib/quotes/calculations";
+import { deriveReviewState, labelizeReviewValue } from "@/lib/rfqs/review-status";
 import { createClient } from "@/lib/supabase/server";
 
 type PageProps = {
@@ -39,6 +41,11 @@ type Rfq = {
   subject: string;
   status: string;
   priority: string;
+  review_status: string | null;
+  next_action: string | null;
+  review_due_at: string | null;
+  assigned_to: string | null;
+  last_activity_at: string | null;
   submission_deadline: string | null;
   created_at: string;
   delivery_location: string | null;
@@ -93,6 +100,19 @@ type CustomerQuote = {
   created_at: string;
 };
 
+function pickPreferredCustomerQuote(quotes: CustomerQuote[]) {
+  return (
+    quotes.find(
+      (quote) =>
+        quote.approval_status === "approved" ||
+        quote.status === "accepted" ||
+        quote.status === "sent",
+    ) ??
+    quotes[0] ??
+    null
+  );
+}
+
 type ActivityLog = {
   id: string;
   action: string;
@@ -111,6 +131,11 @@ type LinkedEmail = {
   body_html: string | null;
   body_preview: string | null;
   received_at: string;
+};
+
+type MemberRow = {
+  user_id: string;
+  role: string;
 };
 
 type EmailAttachment = {
@@ -307,7 +332,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
   const rfqResponse = await supabase
     .from("rfqs")
     .select(
-      "id, rfq_number, subject, status, priority, submission_deadline, created_at, delivery_location, notes, customers(company_name, contact_name, email, phone, address)",
+      "id, rfq_number, subject, status, priority, review_status, next_action, review_due_at, assigned_to, last_activity_at, submission_deadline, created_at, delivery_location, notes, customers(company_name, contact_name, email, phone, address)",
     )
     .eq("id", id)
     .eq("organization_id", organization.id)
@@ -359,6 +384,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
     customerQuotesResponse,
     activityResponse,
     linkedEmailsResponse,
+    membersResponse,
   ] = await Promise.all([
     supabase
       .from("rfq_items")
@@ -395,14 +421,33 @@ export default async function RfqDetailPage({ params }: PageProps) {
       .eq("organization_id", organization.id)
       .eq("rfq_id", rfq.id)
       .order("received_at", { ascending: true }),
+    supabase
+      .from("organization_members")
+      .select("user_id, role")
+      .eq("organization_id", organization.id)
+      .eq("status", "active")
+      .order("created_at", { ascending: true }),
   ]);
 
   const items = (itemsResponse.data ?? []) as RfqItem[];
   const supplierQuotes = (supplierQuotesResponse.data ?? []) as SupplierQuote[];
   const customerQuotes = (customerQuotesResponse.data ?? []) as CustomerQuote[];
-  const latestCustomerQuote = customerQuotes[0] ?? null;
+  const latestCustomerQuote = pickPreferredCustomerQuote(customerQuotes);
+  const reviewState = deriveReviewState({
+    currentReviewStatus: rfq.review_status,
+    rfqStatus: rfq.status,
+    reviewDueAt: rfq.review_due_at,
+    submissionDeadline: rfq.submission_deadline,
+    itemCount: items.length,
+    customerQuoteCount: customerQuotes.length,
+    latestCustomerQuoteStatus: latestCustomerQuote?.status,
+    latestCustomerQuoteApprovalStatus: latestCustomerQuote?.approval_status,
+  });
+  const effectiveReviewStatus = rfq.review_status ?? reviewState.reviewStatus;
+  const effectiveNextAction = rfq.next_action ?? reviewState.nextAction;
   const activityLogs = (activityResponse.data ?? []) as ActivityLog[];
   const linkedEmails = (linkedEmailsResponse.data ?? []) as LinkedEmail[];
+  const members = (membersResponse.data ?? []) as MemberRow[];
   const originalEmails: OriginalEmailView[] = linkedEmails.map((email, index) => {
     const body = originalEmailBody(email);
 
@@ -452,6 +497,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
     customerQuotesResponse.error ??
     activityResponse.error ??
     linkedEmailsResponse.error ??
+    membersResponse.error ??
     attachmentsResponse.error ??
     extractedItemsResponse.error;
   const canDeleteRfq = ["owner", "admin", "manager"].includes(organization.role);
@@ -528,6 +574,47 @@ export default async function RfqDetailPage({ params }: PageProps) {
         </div>
       ) : null}
 
+      <Card className="p-5">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+          <div className="grid gap-4 text-sm sm:grid-cols-2">
+            <div>
+              <p className="font-medium text-slate-500">Review status</p>
+              <p className="mt-1 font-semibold text-slate-950">
+                {labelizeReviewValue(effectiveReviewStatus)}
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-slate-500">Assigned to</p>
+              <p className="mt-1 font-semibold text-slate-950">
+                {rfq.assigned_to ? rfq.assigned_to.slice(0, 8) : "Unassigned"}
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-slate-500">Review due</p>
+              <p className="mt-1 font-semibold text-slate-950">
+                {formatDateTime(rfq.review_due_at)}
+              </p>
+            </div>
+            <div>
+              <p className="font-medium text-slate-500">Next action</p>
+              <p className="mt-1 font-semibold text-slate-950">
+                {effectiveNextAction}
+              </p>
+            </div>
+          </div>
+          <ReviewQueueActions
+            rfqId={rfq.id}
+            assignedTo={rfq.assigned_to}
+            reviewStatus={effectiveReviewStatus}
+            priority={rfq.priority}
+            reviewDueAt={rfq.review_due_at}
+            nextAction={effectiveNextAction}
+            members={members}
+            canManage={["owner", "admin", "manager", "procurement"].includes(organization.role)}
+          />
+        </div>
+      </Card>
+
       <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
         <Card className="p-6">
           <h2 className="text-lg font-semibold text-slate-950">Customer</h2>
@@ -582,10 +669,10 @@ export default async function RfqDetailPage({ params }: PageProps) {
       <Card className="overflow-hidden">
         <div className="border-b border-slate-200 px-5 py-4">
           <h2 className="text-lg font-semibold text-slate-950">
-            Original Email
+            Email Conversation
           </h2>
           <p className="mt-1 text-sm leading-6 text-slate-600">
-            Review the source email alongside extracted items to confirm nothing was missed.
+            Review the original request, follow-ups, revisions, and clarifications alongside extracted items.
           </p>
         </div>
         <OriginalEmailSection emails={originalEmails} />

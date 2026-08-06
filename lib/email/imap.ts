@@ -1,6 +1,13 @@
 import { ImapFlow, type MailboxObject } from "imapflow";
 import { simpleParser } from "mailparser";
 import { classifyRfqEmail, type RfqClassification } from "@/lib/email/rfq-classifier";
+import {
+  fallbackThreadKey,
+  normalizeEmailSubject,
+  normalizeMessageId,
+  normalizeReferences,
+  threadPositionFromDate,
+} from "@/lib/email/threading";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type SupabaseClientLike = SupabaseClient;
@@ -40,6 +47,7 @@ export type ImapScanSummary = {
   possibleRfq: number;
   skippedNotRfq: number;
   duplicates: number;
+  attachmentCount: number;
   highestUid: number | null;
   uidValidity: number | null;
   folder: string;
@@ -60,6 +68,19 @@ type ParsedScannedMessage = {
   classification: RfqClassification;
   matchedKeywords: string[];
   classificationReason: string;
+  messageIdHeader: string | null;
+  inReplyToHeader: string | null;
+  referencesHeader: string[];
+  normalizedSubject: string;
+  threadKey: string;
+  parentEmailId: string | null;
+  linkedRfqId: string | null;
+};
+
+type ParsedMailWithHeaders = {
+  headers?: {
+    get(name: string): unknown;
+  };
 };
 
 export type ImapErrorDetails = {
@@ -324,6 +345,8 @@ async function parseScannedMessage(
   uid: number,
   source: Buffer,
   flags: Set<string> | undefined,
+  connection: ImapConnectionRow,
+  supabase: SupabaseClientLike,
 ): Promise<ParsedScannedMessage> {
   const parsed = await simpleParser(source);
   const firstSender = parsed.from?.value?.[0];
@@ -334,6 +357,26 @@ async function parseScannedMessage(
   const rawHtml = typeof parsed.html === "string" ? parsed.html : null;
   const bodyPreview = rawBody.replace(/\s+/g, " ").trim().slice(0, 1000);
   const attachments = parsed.attachments ?? [];
+  const receivedAt = (parsed.date ?? new Date()).toISOString();
+  const headers = (parsed as ParsedMailWithHeaders).headers;
+  const messageIdHeader = normalizeMessageId(headers?.get("message-id") as string | null | undefined);
+  const inReplyToHeader = normalizeMessageId(headers?.get("in-reply-to") as string | null | undefined);
+  const referencesHeader = normalizeReferences(
+    headers?.get("references") as string | string[] | null | undefined,
+  );
+  const normalizedSubject = normalizeEmailSubject(subject);
+  const thread = await resolveEmailThread({
+    supabase,
+    organizationId: connection.organization_id,
+    subject,
+    normalizedSubject,
+    fromEmail,
+    bodyPreview,
+    messageIdHeader,
+    inReplyToHeader,
+    referencesHeader,
+    receivedAt,
+  });
   let classification;
 
   try {
@@ -355,12 +398,105 @@ async function parseScannedMessage(
     bodyPreview,
     bodyText: rawBody.trim() || null,
     bodyHtml: rawHtml,
-    receivedAt: (parsed.date ?? new Date()).toISOString(),
+    receivedAt,
     hasAttachments: attachments.length > 0,
     attachmentCount: attachments.length,
     classification: classification.classification,
     matchedKeywords: classification.matchedKeywords,
     classificationReason: classification.reason,
+    messageIdHeader,
+    inReplyToHeader,
+    referencesHeader,
+    normalizedSubject,
+    threadKey: thread.threadKey,
+    parentEmailId: thread.parentEmailId,
+    linkedRfqId: thread.rfqId,
+  };
+}
+
+async function resolveEmailThread({
+  supabase,
+  organizationId,
+  subject,
+  normalizedSubject,
+  fromEmail,
+  bodyPreview,
+  messageIdHeader,
+  inReplyToHeader,
+  referencesHeader,
+  receivedAt,
+}: {
+  supabase: SupabaseClientLike;
+  organizationId: string;
+  subject: string;
+  normalizedSubject: string;
+  fromEmail: string;
+  bodyPreview: string;
+  messageIdHeader: string | null;
+  inReplyToHeader: string | null;
+  referencesHeader: string[];
+  receivedAt: string;
+}) {
+  const referencedIds = [inReplyToHeader, ...referencesHeader].filter(
+    (value): value is string => Boolean(value),
+  );
+
+  if (referencedIds.length > 0) {
+    const { data } = await supabase
+      .from("email_messages")
+      .select("id, thread_key, rfq_id")
+      .eq("organization_id", organizationId)
+      .in("message_id_header", referencedIds)
+      .order("received_at", { ascending: false })
+      .limit(1);
+    const parent = data?.[0];
+    if (parent?.thread_key) {
+      return {
+        threadKey: parent.thread_key as string,
+        parentEmailId: parent.id as string,
+        rfqId: (parent.rfq_id as string | null) ?? null,
+      };
+    }
+  }
+
+  const received = new Date(receivedAt);
+  const windowStart = new Date(received.getTime() - 14 * 24 * 60 * 60_000).toISOString();
+  const windowEnd = new Date(received.getTime() + 14 * 24 * 60 * 60_000).toISOString();
+  const domain = fromEmail.split("@")[1]?.toLowerCase();
+
+  if (normalizedSubject && normalizedSubject !== "request for quote" && domain) {
+    const { data } = await supabase
+      .from("email_messages")
+      .select("id, thread_key, rfq_id, from_email")
+      .eq("organization_id", organizationId)
+      .eq("normalized_subject", normalizedSubject)
+      .gte("received_at", windowStart)
+      .lte("received_at", windowEnd)
+      .order("received_at", { ascending: false })
+      .limit(20);
+    const match = data?.find((email) =>
+      String(email.from_email ?? "").toLowerCase().endsWith(`@${domain}`),
+    );
+    if (match?.thread_key) {
+      return {
+        threadKey: match.thread_key as string,
+        parentEmailId: match.id as string,
+        rfqId: (match.rfq_id as string | null) ?? null,
+      };
+    }
+  }
+
+  return {
+    threadKey:
+      messageIdHeader ??
+      fallbackThreadKey({
+        organizationId,
+        subject,
+        fromEmail,
+        body: bodyPreview,
+      }),
+    parentEmailId: null,
+    rfqId: null,
   };
 }
 
@@ -404,6 +540,7 @@ export async function scanImapInbox(
         possibleRfq: 0,
         skippedNotRfq: 0,
         duplicates: 0,
+        attachmentCount: 0,
         highestUid: connection.last_processed_uid ?? connection.last_uid ?? null,
         uidValidity,
         folder: mailboxName,
@@ -420,7 +557,13 @@ export async function scanImapInbox(
       if (message.source) {
         try {
           scannedMessages.push(
-            await parseScannedMessage(message.uid, message.source, message.flags),
+            await parseScannedMessage(
+              message.uid,
+              message.source,
+              message.flags,
+              connection,
+              supabase,
+            ),
           );
         } catch (error) {
           console.warn("IMAP message parse failed", {
@@ -443,8 +586,10 @@ export async function scanImapInbox(
     let possibleRfq = 0;
     let skippedNotRfq = 0;
     let duplicates = 0;
+    let attachmentCount = 0;
 
     for (const message of scannedMessages) {
+      attachmentCount += message.attachmentCount;
       if (message.classification === "likely_rfq") likelyRfq += 1;
       if (message.classification === "possible_rfq") possibleRfq += 1;
       if (message.classification === "not_rfq") {
@@ -477,6 +622,13 @@ export async function scanImapInbox(
           provider_message_id: providerMessageId,
           email_connection_id: connection.id,
           conversation_id: null,
+          message_id_header: message.messageIdHeader,
+          in_reply_to_header: message.inReplyToHeader,
+          references_header: message.referencesHeader,
+          normalized_subject: message.normalizedSubject,
+          thread_key: message.threadKey,
+          thread_position: threadPositionFromDate(message.receivedAt),
+          parent_email_id: message.parentEmailId,
           from_email: message.fromEmail,
           from_name: message.fromName,
           subject: message.subject,
@@ -490,6 +642,7 @@ export async function scanImapInbox(
           classification: message.classification,
           classification_reason: message.classificationReason,
           is_rfq: message.classification === "likely_rfq" ? true : null,
+          rfq_id: message.linkedRfqId,
           raw_payload: {
             uid: message.uid,
             flags: message.flags,
@@ -510,6 +663,18 @@ export async function scanImapInbox(
       }
 
       insertedOrUpdated += 1;
+
+      if (message.linkedRfqId) {
+        await supabase
+          .from("rfqs")
+          .update({
+            last_activity_at: message.receivedAt,
+            next_action: "Review new email reply",
+            review_status: "needs_review",
+          })
+          .eq("id", message.linkedRfqId)
+          .eq("organization_id", connection.organization_id);
+      }
     }
 
     await supabase
@@ -530,6 +695,7 @@ export async function scanImapInbox(
       possibleRfq,
       skippedNotRfq,
       duplicates,
+      attachmentCount,
       highestUid: nextProcessedUid,
       uidValidity,
       folder: mailboxName,

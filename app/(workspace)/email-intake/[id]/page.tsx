@@ -3,6 +3,7 @@ import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DeleteEmailIntakeButton } from "@/components/email-intake/delete-email-button";
 import { EmailClassificationActions } from "@/components/email-intake/email-actions";
+import { LinkThreadToRfqForm } from "@/components/email-intake/thread-actions";
 import { requireOrganization } from "@/lib/auth/session";
 import { extractRfqItemsFromEmailText } from "@/lib/email/rfq-item-extractor";
 import { createClient } from "@/lib/supabase/server";
@@ -29,6 +30,9 @@ type EmailMessage = {
   classification: string;
   is_rfq: boolean | null;
   rfq_id: string | null;
+  thread_key: string | null;
+  parent_email_id: string | null;
+  normalized_subject: string | null;
 };
 
 type EmailAttachment = {
@@ -137,7 +141,7 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
   const { data, error } = await supabase
     .from("email_messages")
     .select(
-      "id, provider, provider_message_id, from_name, from_email, subject, body_preview, body, body_text, body_html, received_at, has_attachments, classification, is_rfq, rfq_id",
+      "id, provider, provider_message_id, from_name, from_email, subject, body_preview, body, body_text, body_html, received_at, has_attachments, classification, is_rfq, rfq_id, thread_key, parent_email_id, normalized_subject",
     )
     .eq("id", id)
     .eq("organization_id", organization.id)
@@ -195,6 +199,23 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
     .eq("email_message_id", email.id)
     .order("created_at", { ascending: true });
   const attachments = (attachmentsResponse.data ?? []) as EmailAttachment[];
+  const [threadResponse, rfqsResponse] = await Promise.all([
+    email.thread_key
+      ? supabase
+          .from("email_messages")
+          .select("id, provider, provider_message_id, from_name, from_email, subject, body_preview, body, body_text, body_html, received_at, has_attachments, classification, is_rfq, rfq_id, thread_key, parent_email_id, normalized_subject")
+          .eq("organization_id", organization.id)
+          .eq("thread_key", email.thread_key)
+          .order("received_at", { ascending: true })
+      : Promise.resolve({ data: [email], error: null }),
+    supabase
+      .from("rfqs")
+      .select("id, rfq_number, subject")
+      .eq("organization_id", organization.id)
+      .order("created_at", { ascending: false })
+      .limit(50),
+  ]);
+  const threadEmails = (threadResponse.data ?? [email]) as EmailMessage[];
 
   return (
     <div className="space-y-6">
@@ -257,6 +278,16 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
           />
         </div>
 
+        <div className="mt-4 border-t border-slate-200 pt-4">
+          <p className="mb-2 text-sm font-semibold text-slate-950">
+            Thread linking
+          </p>
+          <LinkThreadToRfqForm
+            emailId={email.id}
+            rfqs={(rfqsResponse.data ?? []) as Array<{ id: string; rfq_number: string; subject: string }>}
+          />
+        </div>
+
         {email.rfq_id ? (
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Link
@@ -284,6 +315,49 @@ export default async function EmailIntakeDetailPage({ params }: PageProps) {
             ) : null}
           </div>
         )}
+      </Card>
+
+      <Card className="overflow-hidden">
+        <div className="border-b border-slate-200 px-5 py-4">
+          <h2 className="text-lg font-semibold text-slate-950">
+            Email conversation
+          </h2>
+          <p className="mt-1 text-sm leading-6 text-slate-600">
+            Messages are shown oldest to newest. Replies linked to an RFQ are preserved as revisions or follow-ups for review.
+          </p>
+        </div>
+        {threadResponse.error ? (
+          <div className="px-5 py-4 text-sm text-rose-700">{threadResponse.error.message}</div>
+        ) : null}
+        <div className="divide-y divide-slate-200">
+          {threadEmails.map((message, index) => (
+            <article key={message.id} className="px-5 py-5">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-teal-700">
+                    {index === 0 ? "Original request" : message.rfq_id ? "Revision / follow-up" : "Follow-up"}
+                  </p>
+                  <h3 className="mt-1 font-semibold text-slate-950">{message.subject}</h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    {message.from_name ? `${message.from_name} <${message.from_email}>` : message.from_email}
+                  </p>
+                </div>
+                <div className="text-sm text-slate-600 sm:text-right">
+                  <p>{formatDate(message.received_at)}</p>
+                  <p>{labelize(message.classification)}</p>
+                  {message.rfq_id ? (
+                    <Link href={`/rfqs/${message.rfq_id}`} className="font-semibold text-teal-700 hover:text-teal-800">
+                      Open linked RFQ
+                    </Link>
+                  ) : null}
+                </div>
+              </div>
+              <div className="mt-4 whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-700">
+                {emailBody(message)}
+              </div>
+            </article>
+          ))}
+        </div>
       </Card>
 
       <Card className="overflow-hidden">

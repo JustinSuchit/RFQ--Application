@@ -80,6 +80,7 @@ async function runScheduledImapScans(request: Request) {
         imported: summary.insertedOrUpdated,
         skippedNotRfq: summary.skippedNotRfq,
         duplicates: summary.duplicates,
+        attachments: summary.attachmentCount,
         highestUid: summary.highestUid,
       });
     } catch (scanError) {

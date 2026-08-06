@@ -17,6 +17,12 @@ type EmailMessage = {
   classification: string;
   is_rfq: boolean | null;
   rfq_id: string | null;
+  thread_key: string | null;
+  normalized_subject: string | null;
+};
+
+type PageProps = {
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 };
 
 function formatDate(value: string) {
@@ -43,18 +49,55 @@ function compactPreview(value: string | null) {
 
 const deleteEmailRoles = new Set(["owner", "admin", "manager", "procurement"]);
 
-export default async function EmailIntakePage() {
+function param(params: Record<string, string | string[] | undefined>, key: string) {
+  const value = params[key];
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+export default async function EmailIntakePage({ searchParams }: PageProps) {
   const organization = await requireOrganization();
+  const params = (await searchParams) ?? {};
+  const mode = param(params, "mode") || "conversations";
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("email_messages")
     .select(
-      "id, provider, from_name, from_email, subject, body_preview, received_at, has_attachments, classification, is_rfq, rfq_id",
+      "id, provider, from_name, from_email, subject, body_preview, received_at, has_attachments, classification, is_rfq, rfq_id, thread_key, normalized_subject",
     )
     .eq("organization_id", organization.id)
     .in("classification", ["likely_rfq", "possible_rfq"])
     .order("received_at", { ascending: false });
   const emails = (data ?? []) as EmailMessage[];
+  const conversationRows = Array.from(
+    emails
+      .reduce((map, email) => {
+        const key = email.thread_key || email.id;
+        const current = map.get(key);
+        if (!current) {
+          map.set(key, {
+            ...email,
+            messageCount: 1,
+            latestSender: email.from_name || email.from_email,
+            latestReceivedAt: email.received_at,
+          });
+          return map;
+        }
+
+        current.messageCount += 1;
+        if (new Date(email.received_at).getTime() > new Date(current.latestReceivedAt).getTime()) {
+          current.latestSender = email.from_name || email.from_email;
+          current.latestReceivedAt = email.received_at;
+          current.id = email.id;
+          current.subject = email.subject;
+          current.body_preview = email.body_preview;
+          current.classification = email.classification;
+          current.rfq_id = email.rfq_id ?? current.rfq_id;
+        }
+        return map;
+      }, new Map<string, EmailMessage & { messageCount: number; latestSender: string; latestReceivedAt: string }>())
+      .values(),
+  );
+  const rows = mode === "individual" ? emails.map((email) => ({ ...email, messageCount: 1, latestSender: email.from_name || email.from_email, latestReceivedAt: email.received_at })) : conversationRows;
   const canDeleteEmail = deleteEmailRoles.has(organization.role);
 
   return (
@@ -80,6 +123,21 @@ export default async function EmailIntakePage() {
         </Link>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href="/email-intake?mode=conversations"
+          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "border border-slate-200 bg-white text-slate-700" : "bg-slate-950 text-white"}`}
+        >
+          Conversations
+        </Link>
+        <Link
+          href="/email-intake?mode=individual"
+          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+        >
+          Individual messages
+        </Link>
+      </div>
+
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
           {error.message}
@@ -95,11 +153,12 @@ export default async function EmailIntakePage() {
           <table className="w-full min-w-full table-fixed divide-y divide-slate-200 text-sm max-lg:min-w-[1080px]">
             <colgroup>
               <col style={{ width: "16%" }} />
-              <col style={{ width: "36%" }} />
+              <col style={{ width: "32%" }} />
               <col style={{ width: "10%" }} />
               <col style={{ width: "8%" }} />
-              <col style={{ width: "13%" }} />
+              <col style={{ width: "11%" }} />
               <col style={{ width: "7%" }} />
+              <col style={{ width: "6%" }} />
               <col style={{ width: "10%" }} />
             </colgroup>
             <thead className="bg-slate-50 text-left text-xs font-semibold uppercase text-slate-500">
@@ -117,10 +176,13 @@ export default async function EmailIntakePage() {
                   Source
                 </th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-5 py-3">
-                  Received
+                  Latest
                 </th>
                 <th className="sticky top-0 z-20 bg-slate-50 px-5 py-3">
                   Attachments
+                </th>
+                <th className="sticky top-0 z-20 bg-slate-50 px-5 py-3">
+                  Thread
                 </th>
                 <th className="sticky right-0 top-0 z-30 border-l border-slate-200 bg-slate-50 px-5 py-3 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.45)]">
                   Actions
@@ -128,12 +190,12 @@ export default async function EmailIntakePage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 bg-white">
-              {emails.length ? (
-                emails.map((email) => (
+              {rows.length ? (
+                rows.map((email) => (
                   <tr key={email.id} className="group transition hover:bg-slate-50">
                     <td className="sticky left-0 z-10 overflow-hidden border-r border-slate-100 bg-white px-4 py-4 shadow-[8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-slate-50">
                       <p className="truncate font-semibold text-slate-950">
-                        {email.from_name || email.from_email}
+                        {email.latestSender}
                       </p>
                       <p className="truncate text-xs text-slate-500" title={email.from_email}>
                         {email.from_email}
@@ -161,10 +223,15 @@ export default async function EmailIntakePage() {
                       {labelize(email.provider)}
                     </td>
                     <td className="truncate px-4 py-4 text-slate-600">
-                      {formatDate(email.received_at)}
+                      {formatDate(email.latestReceivedAt)}
                     </td>
                     <td className="truncate px-4 py-4 text-slate-600">
                       {email.has_attachments ? "Yes" : "No"}
+                    </td>
+                    <td className="truncate px-4 py-4 text-slate-600">
+                      <span className="rounded-md bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-700">
+                        {email.messageCount}
+                      </span>
                     </td>
                     <td className="sticky right-0 z-10 border-l border-slate-100 bg-white px-3 py-4 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-slate-50">
                       <div className="flex flex-nowrap justify-end gap-2 whitespace-nowrap">
@@ -196,7 +263,7 @@ export default async function EmailIntakePage() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan={7}>
+                  <td colSpan={8}>
                     <EmptyState
                       title="No manually logged emails yet"
                       description="Emails logged by your team will appear here for RFQ review."

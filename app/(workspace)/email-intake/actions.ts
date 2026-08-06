@@ -9,6 +9,11 @@ import {
   type ExtractedRfqItem,
 } from "@/lib/email/rfq-item-extractor";
 import {
+  fallbackThreadKey,
+  normalizeEmailSubject,
+  threadPositionFromDate,
+} from "@/lib/email/threading";
+import {
   generateNextRfqNumber,
   isUniqueViolation,
 } from "@/lib/rfqs/numbering";
@@ -81,6 +86,13 @@ export async function createManualEmailAction(
 
   const classification = classifyEmailForRfq(subject, body);
   const providerMessageId = `manual-${Date.now()}`;
+  const normalizedSubject = normalizeEmailSubject(subject);
+  const threadKey = fallbackThreadKey({
+    organizationId: organization.id,
+    subject,
+    fromEmail,
+    body,
+  });
   const { data, error } = await supabase
     .from("email_messages")
     .insert({
@@ -95,6 +107,9 @@ export async function createManualEmailAction(
       body_text: body,
       body_html: null,
       received_at: new Date(receivedAt).toISOString(),
+      normalized_subject: normalizedSubject,
+      thread_key: threadKey,
+      thread_position: threadPositionFromDate(receivedAt),
       has_attachments: hasAttachments,
       classification,
       is_rfq: classification === "likely_rfq" ? true : null,
@@ -324,6 +339,76 @@ export async function markEmailClassificationAction(
   return { error: "" };
 }
 
+export async function linkEmailThreadToRfqAction(
+  _previousState: EmailIntakeState,
+  formData: FormData,
+): Promise<EmailIntakeState> {
+  const user = await requireUser();
+  const organization = await requireOrganization();
+  const supabase = await createClient();
+  const emailId = text(formData, "emailId");
+  const rfqId = text(formData, "rfqId");
+
+  if (!emailId) return { error: "Email id is required." };
+  if (!rfqId) return { error: "Choose an RFQ to link." };
+
+  const { data: email, error: emailError } = await supabase
+    .from("email_messages")
+    .select("id, thread_key")
+    .eq("id", emailId)
+    .eq("organization_id", organization.id)
+    .maybeSingle();
+
+  if (emailError || !email) {
+    return { error: emailError?.message ?? "Email was not found." };
+  }
+
+  const { data: rfq, error: rfqError } = await supabase
+    .from("rfqs")
+    .select("id")
+    .eq("id", rfqId)
+    .eq("organization_id", organization.id)
+    .maybeSingle();
+
+  if (rfqError || !rfq) {
+    return { error: rfqError?.message ?? "RFQ was not found." };
+  }
+
+  let update = supabase
+    .from("email_messages")
+    .update({
+      rfq_id: rfqId,
+      classification: "likely_rfq",
+      is_rfq: true,
+    })
+    .eq("organization_id", organization.id);
+
+  update = email.thread_key ? update.eq("thread_key", email.thread_key) : update.eq("id", emailId);
+  const { error: updateError } = await update;
+
+  if (updateError) return { error: updateError.message };
+
+  await supabase
+    .from("rfqs")
+    .update({
+      review_status: "needs_review",
+      next_action: "Review new email reply",
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq("id", rfqId)
+    .eq("organization_id", organization.id);
+
+  await logActivity(supabase, organization.id, user.id, "Thread linked to RFQ", {
+    email_message_id: emailId,
+    thread_key: email.thread_key,
+    rfq_id: rfqId,
+  });
+
+  revalidatePath(`/email-intake/${emailId}`);
+  revalidatePath(`/rfqs/${rfqId}`);
+  return { error: "", success: "Email thread linked to RFQ." };
+}
+
 export async function createRfqFromEmailAction(
   _previousState: EmailIntakeState,
   formData: FormData,
@@ -337,7 +422,7 @@ export async function createRfqFromEmailAction(
 
   const { data: email, error: emailError } = await supabase
     .from("email_messages")
-    .select("id, from_name, from_email, subject, body_preview, body, body_text, body_html, rfq_id")
+    .select("id, from_name, from_email, subject, body_preview, body, body_text, body_html, rfq_id, thread_key")
     .eq("id", id)
     .eq("organization_id", organization.id)
     .single();
@@ -404,6 +489,9 @@ export async function createRfqFromEmailAction(
         source: "manual_email",
         priority: "normal",
         status: "draft",
+        review_status: "new",
+        next_action: "Review original email",
+        last_activity_at: new Date().toISOString(),
         notes: email.body_text ?? email.body ?? email.body_preview,
         created_by: user.id,
       })
@@ -433,6 +521,13 @@ export async function createRfqFromEmailAction(
       classification: "likely_rfq",
       is_rfq: true,
       rfq_id: rfq.id,
+      thread_key: email.thread_key ?? fallbackThreadKey({
+        organizationId: organization.id,
+        subject: email.subject,
+        fromEmail: email.from_email,
+        body: email.body_text ?? email.body ?? email.body_preview,
+      }),
+      normalized_subject: normalizeEmailSubject(email.subject),
     })
     .eq("id", id)
     .eq("organization_id", organization.id)
@@ -503,6 +598,17 @@ export async function createRfqFromEmailAction(
       rfq_id: rfq.id,
     });
   }
+
+  const reviewStatus = extractedItems.length > 0 ? "awaiting_pricing" : "missing_items";
+  await supabase
+    .from("rfqs")
+    .update({
+      review_status: reviewStatus,
+      next_action: extractedItems.length > 0 ? "Add pricing" : "Extract requested items",
+      last_activity_at: new Date().toISOString(),
+    })
+    .eq("id", rfq.id)
+    .eq("organization_id", organization.id);
 
   await logActivity(supabase, organization.id, user.id, "RFQ created from email", {
     email_message_id: id,

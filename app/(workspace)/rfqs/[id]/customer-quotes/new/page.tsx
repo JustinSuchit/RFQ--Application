@@ -144,7 +144,7 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
         .eq("organization_id", organization.id),
       supabase
         .from("organization_settings")
-        .select("default_quote_validity_days, default_markup_percentage")
+        .select("default_quote_validity_days, default_markup_percentage, quote_pdf_default_validity_days, quote_pdf_footer_text, quote_pdf_terms, quote_pdf_show_notes, quote_pdf_template")
         .eq("organization_id", organization.id)
         .maybeSingle(),
     ]);
@@ -183,7 +183,9 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
   const hasSupplierQuotes = (supplierQuotesResponse.data?.length ?? 0) > 0;
   const hasPriceOptions = quoteItems.every((item) => item.options.length > 0);
   const defaultValidityDays = Number(
-    settingsResponse.data?.default_quote_validity_days ?? 30,
+    settingsResponse.data?.quote_pdf_default_validity_days ??
+      settingsResponse.data?.default_quote_validity_days ??
+      30,
   );
   const defaultMarkupPercentage = Number(
     settingsResponse.data?.default_markup_percentage ?? 25,
@@ -248,6 +250,10 @@ export default async function NewCustomerQuotePage({ params }: PageProps) {
             taxRate={Number(organization.tax_rate ?? 0)}
             defaultValidUntil={defaultValidUntil(defaultValidityDays)}
             defaultMarkupPercentage={defaultMarkupPercentage}
+            defaultPdfFooterNote={settingsResponse.data?.quote_pdf_footer_text ?? ""}
+            defaultPdfTerms={settingsResponse.data?.quote_pdf_terms ?? ""}
+            defaultPdfShowNotes={Boolean(settingsResponse.data?.quote_pdf_show_notes)}
+            defaultPdfTemplate={settingsResponse.data?.quote_pdf_template ?? "professional"}
           />
         </Card>
       )}

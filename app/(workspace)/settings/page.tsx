@@ -116,6 +116,14 @@ export default async function SettingsPage() {
       </div>
 
       <Card className="p-6">
+        <div className="mb-6 flex flex-wrap gap-2">
+          <a
+            href="/settings/quote-pdf"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Quote PDF Settings
+          </a>
+        </div>
         <SettingsManager
           organization={organizationResponse.data}
           settings={{ ...defaultSettings, ...(settingsResponse.data ?? {}) }}

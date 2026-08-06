@@ -56,6 +56,14 @@ export default async function EmailSettingsPage() {
           Configure mailbox intake while keeping manual email logging available
           for RFQ review and conversion.
         </p>
+        <div className="mt-4">
+          <Link
+            href="/settings/email/monitoring"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Open Scan Monitoring
+          </Link>
+        </div>
       </div>
 
       {error ? (

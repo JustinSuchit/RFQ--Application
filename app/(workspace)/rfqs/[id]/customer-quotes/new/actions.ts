@@ -109,6 +109,10 @@ export async function createCustomerQuoteAction(
   const quoteTaxRate = validatedNumber(formData.get("taxRate"));
   const notes = optionalString(formData.get("notes"));
   const terms = optionalString(formData.get("terms"));
+  const pdfFooterNote = optionalString(formData.get("pdfFooterNote"));
+  const pdfTerms = optionalString(formData.get("pdfTerms"));
+  const pdfShowNotes = formData.get("pdfShowNotes") === "on";
+  const pdfTemplate = requiredString(formData.get("pdfTemplate")) === "compact" ? "compact" : "professional";
   const rfqItemIds = formData.getAll("rfqItemId").map((value) => String(value));
   const selectedSupplierQuoteItemIds = formData
     .getAll("selectedSupplierQuoteItemId")
@@ -262,6 +266,31 @@ export async function createCustomerQuoteAction(
   const triggeredRules = ((activeRules ?? []) as ApprovalRuleRow[]).filter(
     (rule) => ruleIsTriggered(rule, totals.total),
   );
+  const { data: pdfSettings } = await supabase
+    .from("organization_settings")
+    .select("quote_pdf_company_name, quote_pdf_address, quote_pdf_phone, quote_pdf_email, quote_pdf_website, quote_pdf_accent_color, quote_pdf_footer_text, quote_pdf_terms, quote_pdf_show_taxable_subtotal, quote_pdf_show_discount, quote_pdf_show_delivery, quote_pdf_show_item_numbers, quote_pdf_show_quote_status, quote_pdf_show_approval_status, quote_pdf_show_notes, quote_pdf_currency_position, quote_pdf_page_size, quote_pdf_template")
+    .eq("organization_id", organization.id)
+    .maybeSingle();
+  const pdfSettingsSnapshot = {
+    company_name: pdfSettings?.quote_pdf_company_name,
+    address: pdfSettings?.quote_pdf_address,
+    phone: pdfSettings?.quote_pdf_phone,
+    email: pdfSettings?.quote_pdf_email,
+    website: pdfSettings?.quote_pdf_website,
+    accent_color: pdfSettings?.quote_pdf_accent_color,
+    footer_text: pdfFooterNote ?? pdfSettings?.quote_pdf_footer_text,
+    terms: pdfTerms ?? pdfSettings?.quote_pdf_terms,
+    show_taxable_subtotal: pdfSettings?.quote_pdf_show_taxable_subtotal,
+    show_discount: pdfSettings?.quote_pdf_show_discount,
+    show_delivery: pdfSettings?.quote_pdf_show_delivery,
+    show_item_numbers: pdfSettings?.quote_pdf_show_item_numbers,
+    show_quote_status: pdfSettings?.quote_pdf_show_quote_status,
+    show_approval_status: pdfSettings?.quote_pdf_show_approval_status,
+    show_notes: pdfShowNotes,
+    currency_position: pdfSettings?.quote_pdf_currency_position,
+    page_size: pdfSettings?.quote_pdf_page_size,
+    template: pdfTemplate,
+  };
   const approvalStatus =
     triggeredRules.length > 0 ? "pending" : "not_required";
   const quoteNotes = [notes, terms ? `Terms and conditions:\n${terms}` : null]
@@ -287,6 +316,11 @@ export async function createCustomerQuoteAction(
       approval_status: approvalStatus,
       valid_until: validUntil,
       notes: quoteNotes || null,
+      pdf_settings_snapshot: pdfSettingsSnapshot,
+      pdf_footer_note: pdfFooterNote,
+      pdf_terms: pdfTerms,
+      pdf_show_notes: pdfShowNotes,
+      pdf_template: pdfTemplate,
       created_by: user.id,
     })
     .select("id")
@@ -342,7 +376,12 @@ export async function createCustomerQuoteAction(
 
   const { error: statusUpdateError } = await supabase
     .from("rfqs")
-    .update({ status: "awaiting_approval" })
+    .update({
+      status: triggeredRules.length > 0 ? "awaiting_approval" : "supplier_pricing",
+      review_status: triggeredRules.length > 0 ? "awaiting_approval" : "ready_to_send",
+      next_action: triggeredRules.length > 0 ? "Submit quote for approval" : "Send approved quote",
+      last_activity_at: new Date().toISOString(),
+    })
     .eq("id", rfqId)
     .eq("organization_id", organization.id);
 

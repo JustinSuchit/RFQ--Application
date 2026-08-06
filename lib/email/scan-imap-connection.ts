@@ -91,6 +91,53 @@ async function writeActivityLog(
   }
 }
 
+async function createScanRun(
+  supabase: SupabaseClientLike,
+  input: ScanImapConnectionInput,
+  connection: ImapConnectionRow,
+) {
+  const { data, error } = await supabase
+    .from("email_scan_runs")
+    .insert({
+      organization_id: input.organizationId,
+      email_connection_id: input.connectionId,
+      trigger: input.trigger,
+      provider: connection.provider,
+      folder: connection.scan_folder,
+      started_at: new Date().toISOString(),
+      status: "running",
+    })
+    .select("id")
+    .maybeSingle();
+
+  if (error) {
+    console.warn("Email scan run start was not recorded", error.message);
+    return null;
+  }
+
+  return (data?.id as string | undefined) ?? null;
+}
+
+async function updateScanRun(
+  supabase: SupabaseClientLike,
+  scanRunId: string | null,
+  values: Record<string, unknown>,
+) {
+  if (!scanRunId) return;
+
+  const { error } = await supabase
+    .from("email_scan_runs")
+    .update({
+      completed_at: new Date().toISOString(),
+      ...values,
+    })
+    .eq("id", scanRunId);
+
+  if (error) {
+    console.warn("Email scan run update was not recorded", error.message);
+  }
+}
+
 export async function scanImapConnection(
   input: ScanImapConnectionInput,
 ): Promise<ScanImapConnectionResult> {
@@ -103,6 +150,7 @@ export async function scanImapConnection(
   const validationError = validateImapConnection(connection);
   if (validationError) throw new Error(validationError);
   if (!connection) throw new Error("No active IMAP connection configured.");
+  const scanRunId = await createScanRun(input.supabase, input, connection);
 
   const staleCutoff = staleLockCutoff();
   const lockResponse = await input.supabase
@@ -153,6 +201,16 @@ export async function scanImapConnection(
       highest_uid: summary.highestUid,
       uid_validity: summary.uidValidity,
     });
+    await updateScanRun(input.supabase, scanRunId, {
+      status: "success",
+      scanned_count: summary.scanned,
+      imported_count: summary.insertedOrUpdated,
+      duplicate_count: summary.duplicates,
+      skipped_not_rfq_count: summary.skippedNotRfq,
+      attachment_count: summary.attachmentCount,
+      highest_uid: summary.highestUid,
+      folder: summary.folder,
+    });
 
     return { ...summary, trigger: input.trigger, status: "completed" };
   } catch (error) {
@@ -173,6 +231,10 @@ export async function scanImapConnection(
 
     await writeActivityLog(input.supabase, input, connection, "failed", {
       error: message.slice(0, 1000),
+    });
+    await updateScanRun(input.supabase, scanRunId, {
+      status: "failed",
+      error_message: message.slice(0, 1000),
     });
 
     throw error;
