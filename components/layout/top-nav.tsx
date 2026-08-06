@@ -1,13 +1,15 @@
 import Link from "next/link";
 import { Bell, Search } from "lucide-react";
-import { LogoutButton } from "@/components/auth/logout-button";
+import { AccountMenu } from "@/components/layout/account-menu";
 import { sidebarNavigation } from "@/lib/data/navigation";
+import type { HeaderUserProfile } from "@/lib/user/profile";
 
 type TopNavProps = {
   organizationName?: string | null;
+  userProfile: HeaderUserProfile;
 };
 
-export function TopNav({ organizationName }: TopNavProps) {
+export function TopNav({ organizationName, userProfile }: TopNavProps) {
   return (
     <header className="sticky top-0 z-10 border-b border-[#dfe4ea] bg-white/95 backdrop-blur">
       <div className="flex min-h-14 flex-col gap-2 px-4 py-2.5 sm:px-6 xl:flex-row xl:items-center xl:justify-between lg:px-7">
@@ -48,17 +50,7 @@ export function TopNav({ organizationName }: TopNavProps) {
             <Bell className="h-4 w-4" aria-hidden="true" />
             <span className="absolute right-2 top-2 h-2 w-2 rounded-full bg-teal-500" />
           </button>
-          <div className="hidden text-right sm:block">
-            <p className="text-sm font-semibold text-slate-950">Platform user</p>
-            <p className="text-xs text-slate-500">Workspace admin</p>
-          </div>
-          <button
-            aria-label="Open user menu"
-            className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-950 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-teal-100"
-          >
-            U
-          </button>
-          <LogoutButton />
+          <AccountMenu {...userProfile} />
         </div>
       </div>
     </header>
