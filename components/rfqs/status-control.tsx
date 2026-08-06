@@ -5,27 +5,7 @@ import {
   updateRfqStatusAction,
   type UpdateRfqStatusState,
 } from "@/app/(workspace)/rfqs/[id]/actions";
-
-const statuses = [
-  "draft",
-  "new",
-  "in_review",
-  "supplier_pricing",
-  "awaiting_approval",
-  "sent",
-  "approved",
-  "accepted",
-  "declined",
-  "rejected",
-  "closed",
-];
-
-function labelize(value: string) {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
+import { labelizeRfqStatus, RFQ_STATUSES } from "@/lib/rfqs/status";
 
 type StatusControlProps = {
   rfqId: string;
@@ -53,9 +33,9 @@ export function StatusControl({ rfqId, currentStatus }: StatusControlProps) {
             defaultValue={currentStatus}
             className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
           >
-            {statuses.map((status) => (
+            {RFQ_STATUSES.map((status) => (
               <option key={status} value={status}>
-                {labelize(status)}
+                {labelizeRfqStatus(status)}
               </option>
             ))}
           </select>

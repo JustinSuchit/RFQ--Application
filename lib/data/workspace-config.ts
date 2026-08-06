@@ -1,15 +1,6 @@
-import type { RfqStatus } from "@/lib/types/mvp";
+import { RFQ_STATUS_FILTERS } from "@/lib/rfqs/status";
 
-export const rfqStatusTabs: ("All" | RfqStatus)[] = [
-  "All",
-  "New",
-  "In Review",
-  "Supplier Pricing",
-  "Awaiting Approval",
-  "Sent",
-  "Accepted",
-  "Declined",
-];
+export const rfqStatusTabs = RFQ_STATUS_FILTERS.map((filter) => filter.label);
 
 export const dashboardMetrics = [
   { label: "Total RFQs", value: "0", helper: "All workspace records" },

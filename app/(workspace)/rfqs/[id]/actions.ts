@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
 import { extractRfqItemsFromNotes } from "@/lib/rfqs/notes-item-extractor";
 import { selectRfqExtractionSource } from "@/lib/rfqs/rfq-extraction-source";
+import { RFQ_STATUS_VALUES } from "@/lib/rfqs/status";
 
 export type UpdateRfqStatusState = {
   error: string;
@@ -42,20 +43,6 @@ export type ExtractRfqItemsState = {
 export type DeleteRfqState = {
   error: string;
 };
-
-const allowedStatuses = new Set([
-  "draft",
-  "new",
-  "in_review",
-  "supplier_pricing",
-  "awaiting_approval",
-  "sent",
-  "approved",
-  "accepted",
-  "declined",
-  "rejected",
-  "closed",
-]);
 
 function itemKey(item: { description: string; quantity: number | null; unit: string | null }) {
   return `${item.description.trim().toLowerCase()}|${Number(item.quantity ?? 0)}|${String(
@@ -113,7 +100,7 @@ export async function updateRfqStatusAction(
     return { error: "RFQ id is required." };
   }
 
-  if (!allowedStatuses.has(newStatus)) {
+  if (!RFQ_STATUS_VALUES.has(newStatus)) {
     return { error: "Invalid RFQ status." };
   }
 
