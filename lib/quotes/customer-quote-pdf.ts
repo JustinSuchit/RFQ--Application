@@ -206,8 +206,34 @@ function colorCommand(color: string) {
   return `${r.toFixed(3)} ${g.toFixed(3)} ${b.toFixed(3)}`;
 }
 
-function textWidth(text: string, size: number) {
-  return ascii(text).length * size * 0.48;
+function glyphWidthFactor(char: string, font: PdfFont) {
+  if (char === " ") return 0.28;
+  if ("ilI.,'!:;|".includes(char)) return 0.25;
+  if ("fjrt()[]".includes(char)) return 0.35;
+  if ("mwMW@#%&".includes(char)) return 0.78;
+  if (/[A-Z0-9]/.test(char)) return font === "bold" ? 0.62 : 0.58;
+  return font === "bold" ? 0.54 : 0.5;
+}
+
+function textWidth(text: string, size: number, font: PdfFont = "regular") {
+  return Array.from(ascii(text)).reduce(
+    (width, char) => width + glyphWidthFactor(char, font) * size,
+    0,
+  );
+}
+
+function fittedFontSize(
+  text: string,
+  maxWidth: number,
+  preferredSize: number,
+  minimumSize: number,
+  font: PdfFont,
+) {
+  let size = preferredSize;
+  while (size > minimumSize && textWidth(text, size, font) > maxWidth) {
+    size -= 0.5;
+  }
+  return Math.max(minimumSize, size);
 }
 
 function wrapText(value: string, maxWidth: number, size = 9) {
@@ -237,9 +263,9 @@ function textCommand(text: string, x: number, y: number, options: TextOptions = 
   let drawX = x;
 
   if (options.align === "right") {
-    drawX = x - textWidth(text, size);
+    drawX = x - textWidth(text, size, options.font ?? "regular");
   } else if (options.align === "center") {
-    drawX = x - textWidth(text, size) / 2;
+    drawX = x - textWidth(text, size, options.font ?? "regular") / 2;
   }
 
   return [
@@ -412,30 +438,85 @@ function drawHeader(layout: PdfLayout, input: CustomerQuotePdfInput, currency: s
     settings?.website,
   ].filter(Boolean) as string[];
   const countryCurrency = [organization.country, currency].filter(Boolean).join(" / ");
+  const headerTop = pageHeight - margin - 8;
+  const rightEdge = pageWidth - margin;
+  const columnGap = 28;
+  const title = "CUSTOMER QUOTATION";
+  const preferredTitleSize = 26;
+  const minimumTitleSize = 18;
+  const titleSize = fittedFontSize(
+    title,
+    bodyWidth,
+    preferredTitleSize,
+    minimumTitleSize,
+    "bold",
+  );
+  const titleWidth = textWidth(title, titleSize, "bold");
+  const minRightColumnWidth = Math.max(titleWidth, 178);
+  const maxLeftColumnWidth = bodyWidth - minRightColumnWidth - columnGap;
+  const leftColumnWidth = Math.max(220, Math.min(304, maxLeftColumnWidth));
+  const rightColumnLeft = margin + leftColumnWidth + columnGap;
+  const rightColumnWidth = rightEdge - rightColumnLeft;
+  const rightTitleSize = fittedFontSize(
+    title,
+    rightColumnWidth,
+    titleSize,
+    minimumTitleSize,
+    "bold",
+  );
+  const rightTitleWidth = textWidth(title, rightTitleSize, "bold");
+  const titleLeft = rightEdge - rightTitleWidth;
+  const titleCenter = titleLeft + rightTitleWidth / 2;
 
   layout.rect(0, pageHeight - 118, pageWidth, 118, { fill: "#f8fafc" });
   layout.rect(0, pageHeight - 118, 9, 118, { fill: layout.brandColor });
-  layout.textAt(orgName, margin, 736, { font: "bold", size: 18, color: "#0f172a" });
-  layout.textAt(countryCurrency || currency, margin, 718, { size: 10, color: "#475569" });
+  wrapText(orgName, leftColumnWidth, 16)
+    .slice(0, 2)
+    .forEach((line, index) => {
+      layout.textAt(line, margin, headerTop - index * 17, {
+        font: "bold",
+        size: 16,
+        color: "#0f172a",
+      });
+    });
+  const orgLineCount = Math.min(wrapText(orgName, leftColumnWidth, 16).length, 2);
+  const countryY = headerTop - orgLineCount * 17 - 2;
+  layout.textAt(countryCurrency || currency, margin, countryY, { size: 10, color: "#475569" });
 
   const headerText = sanitizeText(contactLines.join(" | ") || organization.quote_header_text, "");
   if (headerText) {
-    const headerLines = wrapText(headerText, 250, 8).slice(0, 3);
+    const headerLines = wrapText(headerText, leftColumnWidth, 8).slice(0, 3);
     headerLines.forEach((line, index) => {
-      layout.textAt(line, margin, 700 - index * 11, { size: 8, color: "#64748b" });
+      layout.textAt(line, margin, countryY - 16 - index * 11, { size: 8, color: "#64748b" });
     });
   }
 
-  layout.textAt("CUSTOMER QUOTATION", pageWidth - margin, 738, {
+  layout.textAt(title, rightEdge, 738, {
     align: "right",
     font: "bold",
-    size: 18,
+    size: rightTitleSize,
     color: layout.brandColor,
   });
-  layout.textAt(`Quote No. ${sanitizeText(quote.quote_number)}`, pageWidth - margin, 716, { align: "right", font: "bold", size: 10 });
-  layout.textAt(`RFQ No. ${sanitizeText(rfq.rfq_number)}`, pageWidth - margin, 701, { align: "right", size: 9, color: "#475569" });
-  layout.textAt(`Date ${formatDate(quote.created_at)}`, pageWidth - margin, 686, { align: "right", size: 9, color: "#475569" });
-  layout.textAt(`Valid Until ${formatDate(quote.valid_until)}`, pageWidth - margin, 671, { align: "right", size: 9, color: "#475569" });
+  layout.textAt(`Quote No. ${sanitizeText(quote.quote_number)}`, titleCenter, 713, {
+    align: "center",
+    font: "bold",
+    size: 10,
+  });
+  layout.textAt(`RFQ No. ${sanitizeText(rfq.rfq_number)}`, titleCenter, 698, {
+    align: "center",
+    size: 9,
+    color: "#475569",
+  });
+  layout.textAt(`Date ${formatDate(quote.created_at)}`, titleCenter, 683, {
+    align: "center",
+    size: 9,
+    color: "#475569",
+  });
+  layout.textAt(`Valid Until ${formatDate(quote.valid_until)}`, titleCenter, 668, {
+    align: "center",
+    size: 9,
+    color: "#475569",
+  });
   layout.setY(642);
 }
 
