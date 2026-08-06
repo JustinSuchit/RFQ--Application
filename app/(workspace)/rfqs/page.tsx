@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { DeleteRfqButton } from "@/components/rfqs/delete-rfq-button";
+import { ScanImapButton } from "@/components/email-intake/scan-imap-button";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/session";
 import {
@@ -200,6 +201,9 @@ export default async function RfqsPage({ searchParams }: PageProps) {
     counts.set(filter.value, count);
   });
   const canDeleteRfq = ["owner", "admin", "manager"].includes(organization.role);
+  const canScanImap = ["owner", "admin", "manager", "procurement"].includes(
+    organization.role,
+  );
   const selectedSortLabel =
     sortOptions.find((option) => option.value === activeSort)?.label ?? "Newest first";
 
@@ -218,12 +222,15 @@ export default async function RfqsPage({ searchParams }: PageProps) {
             customer response.
           </p>
         </div>
-        <Link
-          href="/rfqs/new"
-          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          Create RFQ
-        </Link>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-end">
+          {canScanImap ? <ScanImapButton /> : null}
+          <Link
+            href="/rfqs/new"
+            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            Create RFQ
+          </Link>
+        </div>
       </div>
 
       {rfqResponse.error || statusResponse.error ? (

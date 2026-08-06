@@ -30,6 +30,16 @@ export async function POST() {
       );
     }
 
+    if (!["owner", "admin", "manager", "procurement"].includes(organization.role)) {
+      return Response.json(
+        {
+          success: false,
+          error: "You do not have permission to scan the IMAP inbox.",
+        },
+        { status: 403 },
+      );
+    }
+
     const supabase = await createClient();
     const connection = await getActiveImapConnectionForOrganization(
       supabase,
@@ -64,6 +74,7 @@ export async function POST() {
     });
 
     revalidatePath("/email-intake");
+    revalidatePath("/rfqs");
     revalidatePath("/settings/email");
 
     return Response.json({ success: true, ...summary });
