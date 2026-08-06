@@ -101,6 +101,43 @@ const tabs = [
   "User Roles",
   "Integrations",
 ];
+
+const settingGroups = [
+  {
+    label: "Organization",
+    items: [
+      { label: "Organization Profile", type: "tab" },
+      { label: "Branding", type: "tab" },
+      { label: "Currency & Tax", type: "tab" },
+      { label: "RFQ Numbering", type: "tab" },
+    ],
+  },
+  {
+    label: "Workflow",
+    items: [
+      { label: "Approval Rules", type: "tab" },
+      { label: "Email Templates", type: "tab" },
+      { label: "User Roles", type: "tab" },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { label: "Integrations", type: "tab" },
+      { label: "Quote PDF", type: "link", href: "/settings/quote-pdf" },
+      { label: "Scan Monitoring", type: "link", href: "/settings/email/monitoring" },
+    ],
+  },
+] as const;
+
+const timezoneOptions = [
+  "America/Port_of_Spain",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "UTC",
+];
 const inputClass =
   "mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 disabled:bg-slate-50 disabled:text-slate-500";
 const textareaClass =
@@ -155,11 +192,98 @@ function formatDate(value: string | null) {
 
 function FormFooter({ state, pending, canManage, label }: { state: SettingsActionState; pending: boolean; canManage: boolean; label: string }) {
   return canManage ? (
-    <div className="flex flex-col gap-3 border-t border-slate-200 pt-5 sm:flex-row sm:items-center sm:justify-between">
+    <div className="sticky bottom-0 -mx-6 flex flex-col gap-3 border-t border-slate-200 bg-white px-6 pt-5 pb-1 sm:flex-row sm:items-center sm:justify-between lg:-mx-8 lg:px-8">
       <Submit pending={pending} label={label} />
       <Message state={state} />
     </div>
   ) : null;
+}
+
+function SettingsNavigation({
+  activeTab,
+  onChange,
+  mobile = false,
+}: {
+  activeTab: string;
+  onChange: (tab: string) => void;
+  mobile?: boolean;
+}) {
+  if (mobile) {
+    return (
+      <nav aria-label="Settings sections" className="lg:hidden">
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
+          {settingGroups.flatMap((group) =>
+            group.items.map((item) =>
+              item.type === "link" ? (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                >
+                  {item.label}
+                </Link>
+              ) : (
+                <button
+                  key={item.label}
+                  type="button"
+                  aria-current={activeTab === item.label ? "page" : undefined}
+                  onClick={() => onChange(item.label)}
+                  className={
+                    activeTab === item.label
+                      ? "inline-flex h-10 shrink-0 items-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      : "inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  }
+                >
+                  {item.label}
+                </button>
+              ),
+            ),
+          )}
+        </div>
+      </nav>
+    );
+  }
+
+  return (
+    <nav aria-label="Settings sections" className="hidden w-64 shrink-0 lg:block">
+      <div className="sticky top-6 space-y-6 rounded-md border border-slate-200 bg-white p-3 shadow-sm">
+        {settingGroups.map((group) => (
+          <div key={group.label}>
+            <p className="px-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {group.label}
+            </p>
+            <div className="mt-2 space-y-1">
+              {group.items.map((item) =>
+                item.type === "link" ? (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className="flex h-10 items-center rounded-md px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  >
+                    {item.label}
+                  </Link>
+                ) : (
+                  <button
+                    key={item.label}
+                    type="button"
+                    aria-current={activeTab === item.label ? "page" : undefined}
+                    onClick={() => onChange(item.label)}
+                    className={
+                      activeTab === item.label
+                        ? "flex h-10 w-full items-center rounded-md border-l-4 border-teal-500 bg-slate-950 px-3 text-left text-sm font-semibold text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-100"
+                        : "flex h-10 w-full items-center rounded-md px-3 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                    }
+                  >
+                    {item.label}
+                  </button>
+                ),
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </nav>
+  );
 }
 
 export function SettingsManager({ organization, settings, approvalRules, emailTemplates, members, integrations, microsoftConnection, canManage, hasEmailSettings }: Props) {
@@ -173,31 +297,43 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
   const [quotePrefix, setQuotePrefix] = useState(settings.quote_prefix);
   const [brandColor, setBrandColor] = useState(organization.brand_color ?? "#0f766e");
   const integrationByProvider = useMemo(() => new Map(integrations.map((item) => [item.provider, item])), [integrations]);
+  const timezoneValue = organization.timezone || "America/Port_of_Spain";
+  const visibleTimezoneOptions = timezoneOptions.includes(timezoneValue)
+    ? timezoneOptions
+    : [timezoneValue, ...timezoneOptions];
 
   return (
-    <div className="space-y-6">
-      {!canManage ? (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
-          Only organization owners and admins can update settings.
-        </div>
-      ) : null}
+    <div className="space-y-4">
+      <SettingsNavigation activeTab={activeTab} onChange={setActiveTab} mobile />
 
-      <div className="flex gap-2 overflow-x-auto border-b border-slate-200 pb-2">
-        {tabs.map((tab) => (
-          <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={activeTab === tab ? "h-10 shrink-0 rounded-md bg-slate-950 px-3 text-sm font-semibold text-white" : "h-10 shrink-0 rounded-md px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"}>
-            {tab}
-          </button>
-        ))}
-      </div>
+      <div className="flex items-start gap-6">
+        <SettingsNavigation activeTab={activeTab} onChange={setActiveTab} />
 
-      {activeTab === "Organization Profile" ? (
+        <main className="min-w-0 flex-1">
+          <div className="max-w-[1060px] rounded-md border border-slate-200 bg-white p-6 shadow-sm lg:p-8">
+            {!canManage ? (
+              <div className="mb-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-800">
+                Only organization owners and admins can update settings.
+              </div>
+            ) : null}
+
+            {activeTab === "Organization Profile" ? (
         <Section title="Organization Profile" description="Manage the company identity and workspace defaults used across the RFQ process.">
           <form action={profileAction} className="grid gap-5 md:grid-cols-2">
             <label className="text-sm font-semibold text-slate-700">Organization name<input name="name" required disabled={!canManage} defaultValue={organization.name} className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">Slug<input name="slug" required disabled={!canManage} defaultValue={organization.slug} pattern="[a-z0-9]+(-[a-z0-9]+)*" className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">Industry<input name="industry" disabled={!canManage} defaultValue={organization.industry ?? ""} className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">Country<input name="country" disabled={!canManage} defaultValue={organization.country ?? ""} className={inputClass} /></label>
-            <label className="text-sm font-semibold text-slate-700 md:col-span-2">Timezone<input name="timezone" disabled={!canManage} defaultValue={organization.timezone} className={inputClass} /></label>
+            <label className="text-sm font-semibold text-slate-700">
+              Timezone
+              <select name="timezone" disabled={!canManage} defaultValue={timezoneValue} className={inputClass}>
+                {visibleTimezoneOptions.map((timezone) => (
+                  <option key={timezone} value={timezone}>
+                    {timezone}
+                  </option>
+                ))}
+              </select>
+            </label>
             <div className="md:col-span-2"><FormFooter state={profileState} pending={profilePending} canManage={canManage} label="Save Organization Profile" /></div>
           </form>
         </Section>
@@ -289,7 +425,7 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
         </Section>
       ) : null}
 
-      {activeTab === "Integrations" ? (
+            {activeTab === "Integrations" ? (
         <Section title="Integrations" description="Connect mailbox and business-system integrations for this organization.">
           {hasEmailSettings ? <Link href="/settings/email" className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm">Open Email Intake Settings</Link> : null}
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{providers.map(([provider, name, description]) => {
@@ -310,7 +446,10 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
             );
           })}</div>
         </Section>
-      ) : null}
+            ) : null}
+          </div>
+        </main>
+      </div>
     </div>
   );
 }

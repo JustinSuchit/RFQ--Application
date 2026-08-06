@@ -1,4 +1,3 @@
-import { Card } from "@/components/ui/card";
 import {
   SettingsManager,
   type EmailConnectionSummary,
@@ -92,11 +91,11 @@ export default async function SettingsPage() {
 
   if (firstError || !organizationResponse.data) {
     return (
-      <Card className="p-6">
+      <div className="rounded-md border border-rose-200 bg-rose-50 p-6">
         <p className="text-sm font-medium text-rose-700">
           {firstError?.message ?? "Unable to load organization settings."}
         </p>
-      </Card>
+      </div>
     );
   }
 
@@ -115,31 +114,19 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      <Card className="p-6">
-        <div className="mb-6 flex flex-wrap gap-2">
-          <a
-            href="/settings/quote-pdf"
-            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
-          >
-            Quote PDF Settings
-          </a>
-        </div>
-        <SettingsManager
-          organization={organizationResponse.data}
-          settings={{ ...defaultSettings, ...(settingsResponse.data ?? {}) }}
-          approvalRules={(approvalRulesResponse.data ?? []) as ApprovalRule[]}
-          emailTemplates={(emailTemplatesResponse.data ?? []) as EmailTemplate[]}
-          members={(membersResponse.data ?? []) as OrganizationMember[]}
-          integrations={
-            (integrationsResponse.data ?? []) as IntegrationSetting[]
-          }
-          microsoftConnection={
-            (microsoftConnectionResponse.data ?? null) as EmailConnectionSummary | null
-          }
-          canManage={adminRoles.has(currentOrganization.role)}
-          hasEmailSettings={true}
-        />
-      </Card>
+      <SettingsManager
+        organization={organizationResponse.data}
+        settings={{ ...defaultSettings, ...(settingsResponse.data ?? {}) }}
+        approvalRules={(approvalRulesResponse.data ?? []) as ApprovalRule[]}
+        emailTemplates={(emailTemplatesResponse.data ?? []) as EmailTemplate[]}
+        members={(membersResponse.data ?? []) as OrganizationMember[]}
+        integrations={(integrationsResponse.data ?? []) as IntegrationSetting[]}
+        microsoftConnection={
+          (microsoftConnectionResponse.data ?? null) as EmailConnectionSummary | null
+        }
+        canManage={adminRoles.has(currentOrganization.role)}
+        hasEmailSettings={true}
+      />
     </div>
   );
 }
