@@ -1,10 +1,13 @@
 import Link from "next/link";
+import { FileCog } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   QuotePdfSettingsForm,
   type QuotePdfSettings,
 } from "@/components/settings/quote-pdf-settings-form";
 import { requireOrganization } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 const defaultSettings: QuotePdfSettings = {
@@ -41,15 +44,16 @@ export default async function QuotePdfSettingsPage() {
   const canManage = ["owner", "admin", "manager"].includes(organization.role);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link href="/settings" className="text-sm font-semibold text-teal-700 hover:text-teal-800">Back to settings</Link>
-        <p className="mt-4 text-sm font-medium text-teal-700">Document branding</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">Quote PDF</h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Configure company details, branding, defaults, and PDF display controls for customer quotations.
-        </p>
-      </div>
+    <div style={pageThemeStyle("settings")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="settings"
+        icon={FileCog}
+        eyebrow="Document branding"
+        title="Quote PDF"
+        description="Configure company details, branding, defaults, and PDF display controls for customer quotations."
+      >
+        <Link href="/settings" className="text-sm font-semibold text-[var(--page-accent)] hover:opacity-80">Back to settings</Link>
+      </PageHeader>
       {error ? <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error.message}</div> : null}
       <Card className="p-6">
         <QuotePdfSettingsForm settings={{ ...defaultSettings, ...(data ?? {}) }} canManage={canManage} />

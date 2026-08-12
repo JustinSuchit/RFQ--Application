@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { PlugZap } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   ImapConnectionSettings,
   type ImapConnection,
@@ -9,6 +11,7 @@ import {
   type MicrosoftConnection,
 } from "@/components/settings/microsoft-connection-settings";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 const adminRoles = new Set(["owner", "admin"]);
@@ -38,33 +41,29 @@ export default async function EmailSettingsPage() {
   const error = imapResponse.error ?? microsoftResponse.error;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link
-          href="/settings"
-          className="text-sm font-semibold text-teal-700 hover:text-teal-800"
-        >
-          Back to settings
-        </Link>
-        <p className="mt-4 text-sm font-medium text-teal-700">
-          Email intake
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Email Settings
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Configure mailbox intake while keeping manual email logging available
-          for RFQ review and conversion.
-        </p>
-        <div className="mt-4">
+    <div style={pageThemeStyle("integrations")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="integrations"
+        icon={PlugZap}
+        eyebrow="Email intake"
+        title="Email Settings"
+        description="Configure mailbox intake while keeping manual email logging available for RFQ review and conversion."
+      >
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/settings"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+          >
+            Back to settings
+          </Link>
           <Link
             href="/settings/email/monitoring"
-            className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+            className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] px-4 text-sm font-semibold text-[var(--page-accent)] shadow-sm transition hover:border-[var(--page-accent)]"
           >
             Open Scan Monitoring
           </Link>
         </div>
-      </div>
+      </PageHeader>
 
       {error ? (
         <Card className="p-6">

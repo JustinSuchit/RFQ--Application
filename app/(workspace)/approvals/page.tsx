@@ -1,7 +1,10 @@
 import Link from "next/link";
+import { ShieldCheck } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { requireOrganization } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { formatTaxRate } from "@/lib/quotes/calculations";
 import { createClient } from "@/lib/supabase/server";
 
@@ -185,16 +188,14 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
     approvalRequestsResponse.error ?? quotesResponse.error ?? rulesResponse.error;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">Quote governance</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Approvals
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Review customer quotes that require approval before they can be sent.
-        </p>
-      </div>
+    <div style={pageThemeStyle("approvals")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="approvals"
+        icon={ShieldCheck}
+        eyebrow="Quote governance"
+        title="Approvals"
+        description="Review customer quotes that require approval before they can be sent."
+      />
 
       {dataError ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -215,8 +216,8 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
                   href={`/approvals?status=${filter}`}
                   className={`inline-flex h-9 items-center rounded-md px-3 text-sm font-semibold transition ${
                     activeFilter === filter
-                      ? "bg-slate-950 text-white"
-                      : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-950"
+                      ? "border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] text-[var(--page-accent)]"
+                      : "border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-[var(--page-accent-hover)] hover:text-slate-950"
                   }`}
                 >
                   {labelize(filter)}
@@ -330,6 +331,7 @@ export default async function ApprovalsPage({ searchParams }: PageProps) {
           </div>
         ) : (
           <EmptyState
+            icon={ShieldCheck}
             title="No approval requests found"
             description="Pending quote approvals will appear here when approval rules are triggered."
           />

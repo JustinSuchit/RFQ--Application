@@ -1,3 +1,4 @@
+import { Settings } from "lucide-react";
 import {
   SettingsManager,
   type EmailConnectionSummary,
@@ -6,7 +7,9 @@ import {
   type OrganizationMember,
 } from "@/components/settings/settings-manager";
 import { type ApprovalRule } from "@/components/settings/approval-rules-manager";
+import { PageHeader } from "@/components/ui/page-header";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 const adminRoles = new Set(["owner", "admin"]);
@@ -100,19 +103,14 @@ export default async function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">
-          Tenant configuration
-        </p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Settings
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Configure the organization workspace, workflow rules, user roles,
-          templates, and integration settings.
-        </p>
-      </div>
+    <div style={pageThemeStyle("settings")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="settings"
+        icon={Settings}
+        eyebrow="Tenant configuration"
+        title="Settings"
+        description="Configure the organization workspace, workflow rules, user roles, templates, and integration settings."
+      />
 
       <SettingsManager
         organization={organizationResponse.data}

@@ -1,5 +1,8 @@
+import { UserCircle } from "lucide-react";
+import { PageHeader } from "@/components/ui/page-header";
 import { ProfileSettingsForm } from "@/components/profile/profile-settings-form";
 import { requireOrganization, requireUser } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import {
   ensureProfileForUser,
   fallbackDisplayName,
@@ -18,17 +21,14 @@ export default async function ProfilePage() {
   const avatarUrl = await signedAvatarUrl(profile.avatar_path);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">Account settings</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          My Profile
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Manage the name, photo, and contact details shown in your ProcureFlow
-          workspace.
-        </p>
-      </div>
+    <div style={pageThemeStyle("settings")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="settings"
+        icon={UserCircle}
+        eyebrow="Account settings"
+        title="My Profile"
+        description="Manage the name, photo, and contact details shown in your ProcureFlow workspace."
+      />
 
       <ProfileSettingsForm
         displayName={displayName}

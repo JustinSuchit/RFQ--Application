@@ -45,7 +45,7 @@ type ReviewQueueTableProps = {
 
 const initialState: ReviewQueueState = { error: "" };
 const inputClass =
-  "h-9 rounded-md border border-[#dfe4ea] bg-white px-2 text-sm text-slate-700 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400";
+  "accent-input h-9 rounded-md px-2 text-sm disabled:cursor-not-allowed";
 
 function firstRelated<T>(value: T | T[] | null) {
   return Array.isArray(value) ? value[0] ?? null : value;
@@ -129,7 +129,7 @@ export function ReviewQueueTable({
               </p>
             </div>
             {message ? (
-              <p className={isError ? "text-sm font-medium text-rose-700" : "text-sm font-medium text-teal-700"}>
+              <p className={isError ? "text-sm font-medium text-rose-700" : "text-sm font-medium text-[var(--page-accent)]"}>
                 {message}
               </p>
             ) : null}
@@ -222,7 +222,7 @@ export function ReviewQueueTable({
                   reviewPending ||
                   selected.effectiveReviewStatus === "completed"
                 }
-                className="h-9 w-full rounded-md bg-slate-950 px-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto"
+                className="h-9 w-full rounded-md bg-[var(--primary)] px-3 text-sm font-semibold text-white shadow-sm hover:bg-[var(--primary-strong)] disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto"
               >
                 {reviewPending ? "Marking..." : "Mark reviewed"}
               </button>
@@ -267,8 +267,8 @@ export function ReviewQueueTable({
                     onClick={() => setSelectedId(rfq.id)}
                     className={`cursor-pointer transition ${
                       selectedRow
-                        ? "border-l-2 border-l-teal-500 bg-teal-50/60"
-                        : "border-l-2 border-l-transparent hover:bg-slate-50"
+                        ? "border-l-2 border-l-[var(--page-accent)] bg-[var(--page-accent-soft)]"
+                        : "border-l-2 border-l-transparent hover:bg-[var(--page-accent-hover)]"
                     }`}
                   >
                     <td className="px-3 py-2.5">
@@ -278,14 +278,14 @@ export function ReviewQueueTable({
                         checked={selectedRow}
                         onChange={() => setSelectedId(rfq.id)}
                         aria-label={`Select ${rfq.rfq_number}`}
-                        className="h-4 w-4 border-slate-300 text-teal-600 focus:ring-teal-500"
+                        className="h-4 w-4 border-slate-300 text-[var(--page-accent)] focus:ring-[var(--page-accent)]"
                       />
                     </td>
-                    <td className="truncate px-3 py-2.5 font-semibold text-teal-700">
+                    <td className="truncate px-3 py-2.5 font-semibold text-[var(--page-accent)]">
                       <Link
                         href={`/rfqs/${rfq.id}`}
                         onClick={(event) => event.stopPropagation()}
-                        className="hover:text-teal-800"
+                        className="hover:opacity-80"
                       >
                         {rfq.rfq_number}
                       </Link>

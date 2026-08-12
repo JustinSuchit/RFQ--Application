@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useActionState, useMemo, useState } from "react";
+import { Check, Monitor, Moon, Sun, type LucideIcon } from "lucide-react";
 import {
   saveEmailTemplateAction,
   toggleEmailTemplateAction,
@@ -19,6 +20,10 @@ import {
   type ApprovalRule,
 } from "@/components/settings/approval-rules-manager";
 import { EmptyState } from "@/components/ui/empty-state";
+import {
+  useTheme,
+  type ThemePreference,
+} from "@/components/theme/theme-provider";
 
 type Organization = {
   id: string;
@@ -100,6 +105,7 @@ const tabs = [
   "Email Templates",
   "User Roles",
   "Integrations",
+  "Appearance",
 ];
 
 const settingGroups = [
@@ -124,6 +130,7 @@ const settingGroups = [
     label: "System",
     items: [
       { label: "Integrations", type: "tab" },
+      { label: "Appearance", type: "tab" },
       { label: "Quote PDF", type: "link", href: "/settings/quote-pdf" },
       { label: "Scan Monitoring", type: "link", href: "/settings/email/monitoring" },
     ],
@@ -139,9 +146,9 @@ const timezoneOptions = [
   "UTC",
 ];
 const inputClass =
-  "mt-2 h-10 w-full rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 disabled:bg-slate-50 disabled:text-slate-500";
+  "accent-input mt-2 h-10 w-full rounded-md px-3 text-sm placeholder:text-slate-400";
 const textareaClass =
-  "mt-2 min-h-24 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-100 disabled:bg-slate-50 disabled:text-slate-500";
+  "accent-input mt-2 min-h-24 w-full rounded-md px-3 py-2 text-sm placeholder:text-slate-400";
 const roleOptions = ["owner", "admin", "manager", "sales", "procurement", "finance", "viewer"];
 const templateTypes = ["quote_email", "supplier_request", "approval_request", "quote_follow_up"];
 const providers = [
@@ -156,10 +163,36 @@ const providers = [
   ["n8n", "n8n", "Workflow automation placeholder."],
 ];
 
+const appearanceOptions: {
+  value: ThemePreference;
+  label: string;
+  description: string;
+  icon: LucideIcon;
+}[] = [
+  {
+    value: "system",
+    label: "System",
+    description: "Follow your device appearance.",
+    icon: Monitor,
+  },
+  {
+    value: "light",
+    label: "Light",
+    description: "Always use light mode.",
+    icon: Sun,
+  },
+  {
+    value: "dark",
+    label: "Dark",
+    description: "Always use dark mode.",
+    icon: Moon,
+  },
+];
+
 function Message({ state }: { state: SettingsActionState }) {
   if (!state.error && !state.success) return null;
   return (
-    <p className={state.error ? "text-sm font-medium text-rose-600" : "text-sm font-medium text-teal-700"}>
+    <p className={state.error ? "text-sm font-medium text-rose-600" : "text-sm font-medium text-[var(--page-accent)]"}>
       {state.error || state.success}
     </p>
   );
@@ -167,7 +200,7 @@ function Message({ state }: { state: SettingsActionState }) {
 
 function Submit({ pending, label }: { pending: boolean; label: string }) {
   return (
-    <button disabled={pending} className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60">
+    <button disabled={pending} className="inline-flex h-10 items-center justify-center rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--primary-strong)] disabled:cursor-not-allowed disabled:opacity-60">
       {pending ? "Saving..." : label}
     </button>
   );
@@ -218,7 +251,7 @@ function SettingsNavigation({
                 <Link
                   key={item.label}
                   href={item.href}
-                  className="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                  className="inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-[var(--page-accent-hover)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
                 >
                   {item.label}
                 </Link>
@@ -230,8 +263,8 @@ function SettingsNavigation({
                   onClick={() => onChange(item.label)}
                   className={
                     activeTab === item.label
-                      ? "inline-flex h-10 shrink-0 items-center rounded-md bg-slate-950 px-3 text-sm font-semibold text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-100"
-                      : "inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                      ? "inline-flex h-10 shrink-0 items-center rounded-md border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] px-3 text-sm font-semibold text-[var(--page-accent)] shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
+                      : "inline-flex h-10 shrink-0 items-center rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-[var(--page-accent-hover)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
                   }
                 >
                   {item.label}
@@ -258,7 +291,7 @@ function SettingsNavigation({
                   <Link
                     key={item.label}
                     href={item.href}
-                    className="flex h-10 items-center rounded-md px-3 text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                    className="flex h-10 items-center rounded-md px-3 text-sm font-semibold text-slate-600 transition hover:bg-[var(--page-accent-hover)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
                   >
                     {item.label}
                   </Link>
@@ -270,8 +303,8 @@ function SettingsNavigation({
                     onClick={() => onChange(item.label)}
                     className={
                       activeTab === item.label
-                        ? "flex h-10 w-full items-center rounded-md border-l-4 border-teal-500 bg-slate-950 px-3 text-left text-sm font-semibold text-white shadow-sm focus:outline-none focus:ring-2 focus:ring-teal-100"
-                        : "flex h-10 w-full items-center rounded-md px-3 text-left text-sm font-semibold text-slate-600 transition hover:bg-slate-100 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+                        ? "flex h-10 w-full items-center rounded-md border-l-4 border-[var(--page-accent)] bg-[var(--page-accent-soft)] px-3 text-left text-sm font-semibold text-slate-950 shadow-sm focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
+                        : "flex h-10 w-full items-center rounded-md px-3 text-left text-sm font-semibold text-slate-600 transition hover:bg-[var(--page-accent-hover)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
                     }
                   >
                     {item.label}
@@ -288,6 +321,7 @@ function SettingsNavigation({
 
 export function SettingsManager({ organization, settings, approvalRules, emailTemplates, members, integrations, microsoftConnection, canManage, hasEmailSettings }: Props) {
   const [activeTab, setActiveTab] = useState(tabs[0]);
+  const { theme, resolvedTheme, setTheme } = useTheme();
   const [profileState, profileAction, profilePending] = useActionState(updateOrganizationProfileAction, initialState);
   const [brandState, brandAction, brandPending] = useActionState(updateBrandingAction, initialState);
   const [currencyState, currencyAction, currencyPending] = useActionState(updateCurrencyTaxAction, initialState);
@@ -365,7 +399,7 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
             <label className="text-sm font-semibold text-slate-700">Currency<input name="currency" required disabled={!canManage} defaultValue={organization.currency} maxLength={3} className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">
               Default tax rate (%)
-              <div className="mt-2 flex h-10 overflow-hidden rounded-md border border-slate-200 bg-white focus-within:border-teal-500 focus-within:ring-2 focus-within:ring-teal-100">
+              <div className="accent-input mt-2 flex h-10 overflow-hidden rounded-md border bg-white">
                 <input name="taxRate" type="number" min="0" max="100" step="0.01" disabled={!canManage} defaultValue={organization.tax_rate} className="min-w-0 flex-1 bg-transparent px-3 text-sm text-slate-950 outline-none disabled:bg-slate-50 disabled:text-slate-500" />
                 <span className="flex items-center border-l border-slate-200 bg-slate-50 px-3 text-sm font-semibold text-slate-500">%</span>
               </div>
@@ -389,7 +423,7 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
             <label className="text-sm font-semibold text-slate-700">Quote number padding<input name="quoteNumberPadding" type="number" min="1" disabled={!canManage} defaultValue={settings.quote_number_padding} className={inputClass} /></label>
             <label className="text-sm font-semibold text-slate-700">RFQ number reset<select name="rfqNumberReset" disabled={!canManage} defaultValue={settings.rfq_number_reset} className={inputClass}><option value="yearly">Yearly</option><option value="monthly">Monthly</option><option value="never">Never</option></select></label>
             <label className="text-sm font-semibold text-slate-700">Quote number reset<select name="quoteNumberReset" disabled={!canManage} defaultValue={settings.quote_number_reset} className={inputClass}><option value="yearly">Yearly</option><option value="monthly">Monthly</option><option value="never">Never</option></select></label>
-            <div className="rounded-md border border-slate-200 bg-slate-50 p-4 text-sm font-semibold text-slate-700 md:col-span-2">Preview: {rfqPrefix || "RFQ"}-2026-000001 and {quotePrefix || "QT"}-2026-000001</div>
+            <div className="rounded-md border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] p-4 text-sm font-semibold text-slate-700 md:col-span-2">Preview: {rfqPrefix || "RFQ"}-2026-000001 and {quotePrefix || "QT"}-2026-000001</div>
             <div className="md:col-span-2"><FormFooter state={numberingState} pending={numberingPending} canManage={canManage} label="Save Numbering" /></div>
           </form>
         </Section>
@@ -447,6 +481,47 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
           })}</div>
         </Section>
             ) : null}
+
+            {activeTab === "Appearance" ? (
+        <Section title="Appearance" description="Choose how ProcurementFlow should look on this device.">
+          <div className="grid gap-3 md:grid-cols-3">
+            {appearanceOptions.map((option) => {
+              const Icon = option.icon;
+              const active = theme === option.value;
+
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setTheme(option.value)}
+                  className={`rounded-md border p-4 text-left transition focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)] ${
+                    active
+                      ? "border-[var(--page-accent-border)] bg-[var(--page-accent-soft)]"
+                      : "border-slate-200 bg-white hover:border-[var(--page-accent-border)] hover:bg-[var(--page-accent-hover)]"
+                  }`}
+                >
+                  <span className="flex items-start justify-between gap-3">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-md border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] text-[var(--page-accent)]">
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    {active ? <Check className="h-4 w-4 text-[var(--page-accent)]" aria-hidden="true" /> : null}
+                  </span>
+                  <span className="mt-4 block text-sm font-semibold text-slate-950">
+                    {option.label}
+                  </span>
+                  <span className="mt-1 block text-sm leading-6 text-slate-600">
+                    {option.description}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="text-sm text-slate-600">
+            Current effective theme: <span className="font-semibold text-slate-950">{resolvedTheme}</span>.
+          </p>
+        </Section>
+            ) : null}
           </div>
         </main>
       </div>
@@ -457,7 +532,7 @@ export function SettingsManager({ organization, settings, approvalRules, emailTe
 function EmailTemplateRow({ template, canManage }: { template: EmailTemplate; canManage: boolean }) {
   const [state, formAction, pending] = useActionState(toggleEmailTemplateAction, initialState);
   const [editState, editAction, editPending] = useActionState(saveEmailTemplateAction, initialState);
-  return <tr><td className="px-4 py-4 align-top"><p className="font-semibold text-slate-950">{template.name}</p><p className="text-xs text-slate-500">{template.template_type}</p></td><td className="px-4 py-4 align-top text-slate-600">{template.subject}</td><td className="px-4 py-4 align-top">{template.is_active ? "Active" : "Inactive"}</td><td className="px-4 py-4 align-top">{canManage ? <div className="space-y-3"><form action={formAction} className="space-y-1"><input type="hidden" name="templateId" value={template.id} /><input type="hidden" name="isActive" value={String(template.is_active)} /><button disabled={pending} className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold">{pending ? "Updating..." : template.is_active ? "Deactivate" : "Activate"}</button><Message state={state} /></form><details><summary className="cursor-pointer text-xs font-semibold text-teal-700">Edit Template</summary><form action={editAction} className="mt-3 grid gap-3"><input type="hidden" name="templateId" value={template.id} /><select name="templateType" defaultValue={template.template_type} className={inputClass.replace("mt-2 ", "")}>{templateTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><input name="name" defaultValue={template.name} className={inputClass.replace("mt-2 ", "")} /><input name="subject" defaultValue={template.subject} className={inputClass.replace("mt-2 ", "")} /><textarea name="body" defaultValue={template.body} className={textareaClass} /><label className="flex items-center gap-2 text-xs font-semibold"><input name="isActive" type="checkbox" defaultChecked={template.is_active} /> Active</label><button disabled={editPending} className="h-9 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">{editPending ? "Saving..." : "Save Template"}</button><Message state={editState} /></form></details></div> : null}</td></tr>;
+  return <tr><td className="px-4 py-4 align-top"><p className="font-semibold text-slate-950">{template.name}</p><p className="text-xs text-slate-500">{template.template_type}</p></td><td className="px-4 py-4 align-top text-slate-600">{template.subject}</td><td className="px-4 py-4 align-top">{template.is_active ? "Active" : "Inactive"}</td><td className="px-4 py-4 align-top">{canManage ? <div className="space-y-3"><form action={formAction} className="space-y-1"><input type="hidden" name="templateId" value={template.id} /><input type="hidden" name="isActive" value={String(template.is_active)} /><button disabled={pending} className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold">{pending ? "Updating..." : template.is_active ? "Deactivate" : "Activate"}</button><Message state={state} /></form><details><summary className="cursor-pointer text-xs font-semibold text-[var(--page-accent)]">Edit Template</summary><form action={editAction} className="mt-3 grid gap-3"><input type="hidden" name="templateId" value={template.id} /><select name="templateType" defaultValue={template.template_type} className={inputClass.replace("mt-2 ", "")}>{templateTypes.map((type) => <option key={type} value={type}>{type}</option>)}</select><input name="name" defaultValue={template.name} className={inputClass.replace("mt-2 ", "")} /><input name="subject" defaultValue={template.subject} className={inputClass.replace("mt-2 ", "")} /><textarea name="body" defaultValue={template.body} className={textareaClass} /><label className="flex items-center gap-2 text-xs font-semibold"><input name="isActive" type="checkbox" defaultChecked={template.is_active} /> Active</label><button disabled={editPending} className="h-9 rounded-md bg-[var(--primary)] px-3 text-xs font-semibold text-white">{editPending ? "Saving..." : "Save Template"}</button><Message state={editState} /></form></details></div> : null}</td></tr>;
 }
 
 function MemberRow({ member, canManage }: { member: OrganizationMember; canManage: boolean }) {
@@ -530,7 +605,7 @@ function IntegrationCard({
         {mailboxEmail ? <p className="mt-2 text-sm text-slate-600">Mailbox: {mailboxEmail}</p> : null}
         <div className="mt-4 flex flex-wrap gap-2">
           {canManage ? (
-            <Link href="/api/integrations/microsoft/connect" className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">
+            <Link href="/api/integrations/microsoft/connect" className="inline-flex h-9 items-center rounded-md bg-[var(--primary)] px-3 text-xs font-semibold text-white">
               {connected ? "Reconnect Microsoft 365" : "Connect Microsoft 365"}
             </Link>
           ) : null}
@@ -553,5 +628,5 @@ function IntegrationCard({
     );
   }
 
-  return <div className="rounded-md border border-slate-200 bg-white p-5"><h3 className="text-base font-semibold text-slate-950">{name}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{description}</p><p className="mt-4 text-xs font-semibold uppercase text-slate-500">Status: {status}</p><form action={formAction} className="mt-4 space-y-2"><input type="hidden" name="provider" value={provider} />{canManage ? <button disabled={pending} className="inline-flex h-9 items-center rounded-md bg-slate-950 px-3 text-xs font-semibold text-white">{pending ? "Saving..." : "Connect"}</button> : null}<Message state={state} /></form></div>;
+  return <div className="rounded-md border border-slate-200 bg-white p-5"><h3 className="text-base font-semibold text-slate-950">{name}</h3><p className="mt-2 text-sm leading-6 text-slate-600">{description}</p><p className="mt-4 text-xs font-semibold uppercase text-slate-500">Status: {status}</p><form action={formAction} className="mt-4 space-y-2"><input type="hidden" name="provider" value={provider} />{canManage ? <button disabled={pending} className="inline-flex h-9 items-center rounded-md bg-[var(--primary)] px-3 text-xs font-semibold text-white">{pending ? "Saving..." : "Connect"}</button> : null}<Message state={state} /></form></div>;
 }

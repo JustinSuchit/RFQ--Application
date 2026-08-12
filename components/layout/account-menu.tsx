@@ -40,7 +40,7 @@ export function AccountMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex max-w-[260px] items-center gap-2 rounded-md px-1.5 py-1 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-teal-100"
+        className="flex max-w-[260px] items-center gap-2 rounded-md px-1.5 py-1 transition hover:bg-[var(--hover-bg)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
       >
         <span className="hidden min-w-0 text-right sm:block">
           <span className="block truncate text-sm font-semibold text-slate-950">
@@ -67,7 +67,7 @@ export function AccountMenu({
       {open ? (
         <div
           role="menu"
-          className="absolute right-0 mt-2 w-64 rounded-md border border-[#dfe4ea] bg-white p-2 shadow-[0_8px_24px_rgba(15,23,42,0.12)]"
+          className="absolute right-0 z-20 mt-2 w-64 rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 shadow-[var(--shadow-elevated)]"
         >
           <div className="border-b border-slate-100 px-3 py-2">
             <p className="truncate text-sm font-semibold text-slate-950">
@@ -78,7 +78,7 @@ export function AccountMenu({
           <Link
             href="/profile"
             role="menuitem"
-            className="mt-2 block rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+            className="mt-2 block rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-[var(--hover-bg)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
             onClick={() => setOpen(false)}
           >
             My Profile
@@ -86,7 +86,7 @@ export function AccountMenu({
           <Link
             href="/settings"
             role="menuitem"
-            className="block rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100"
+            className="block rounded-md px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-[var(--hover-bg)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
             onClick={() => setOpen(false)}
           >
             Account Settings
@@ -96,7 +96,7 @@ export function AccountMenu({
             role="menuitem"
             disabled={loading}
             onClick={signOut}
-            className="mt-1 w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-teal-100 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-1 w-full rounded-md px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-[var(--hover-bg)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? "Signing out..." : "Sign Out"}
           </button>

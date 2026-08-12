@@ -1,20 +1,20 @@
 import Link from "next/link";
+import { ReceiptText } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { pageThemeStyle } from "@/lib/page-themes";
 
 export default function QuotesPage() {
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">Quote comparison</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Quotes
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Track quote submissions, commercial totals, validity windows, and
-          approval status before sending responses to customers.
-        </p>
-      </div>
+    <div style={pageThemeStyle("quotes")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="quotes"
+        icon={ReceiptText}
+        eyebrow="Quote comparison"
+        title="Quotes"
+        description="Track quote submissions, commercial totals, validity windows, and approval status before sending responses to customers."
+      />
 
       <Card className="overflow-hidden">
         <div className="overflow-x-auto">
@@ -34,12 +34,13 @@ export default function QuotesPage() {
               <tr>
                 <td colSpan={7}>
                   <EmptyState
+                    icon={ReceiptText}
                     title="No quotes yet"
                     description="Customer quotations generated from RFQs will appear here."
                     action={
                       <Link
                         href="/rfqs"
-                        className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                        className="inline-flex h-10 items-center justify-center rounded-md border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] px-4 text-sm font-semibold text-[var(--page-accent)] shadow-sm transition hover:border-[var(--page-accent)]"
                       >
                         View RFQs
                       </Link>

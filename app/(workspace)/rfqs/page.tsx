@@ -1,9 +1,13 @@
 import Link from "next/link";
+import { FileText, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { DeleteRfqButton } from "@/components/rfqs/delete-rfq-button";
 import { ScanImapButton } from "@/components/email-intake/scan-imap-button";
 import { createClient } from "@/lib/supabase/server";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { requireOrganization } from "@/lib/auth/session";
 import {
   getRfqStatusFilter,
@@ -208,30 +212,26 @@ export default async function RfqsPage({ searchParams }: PageProps) {
     sortOptions.find((option) => option.value === activeSort)?.label ?? "Newest first";
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm font-medium text-teal-700">
-            Request management
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-            RFQs
-          </h1>
-          <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-            Manage requests from intake through supplier pricing, approval, and
-            customer response.
-          </p>
-        </div>
+    <div style={pageThemeStyle("rfqs")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="rfqs"
+        icon={FileText}
+        eyebrow="Request management"
+        title="RFQs"
+        description="Manage requests from intake through supplier pricing, approval, and customer response."
+        action={
         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-end">
           {canScanImap ? <ScanImapButton /> : null}
           <Link
             href="/rfqs/new"
-            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--primary-strong)]"
           >
+            <Plus className="h-4 w-4" aria-hidden="true" />
             Create RFQ
           </Link>
         </div>
-      </div>
+        }
+      />
 
       {rfqResponse.error || statusResponse.error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -251,14 +251,14 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                 key={filter.value}
                 href={queryString(params, { status: filter.value })}
                 aria-current={active ? "page" : undefined}
-                className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-teal-100 ${
+                className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)] ${
                   active
-                    ? "bg-teal-600 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-slate-100 hover:text-slate-950"
+                    ? "border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] text-[var(--page-accent)]"
+                    : "text-slate-600 hover:bg-[var(--page-accent-hover)] hover:text-slate-950"
                 }`}
               >
                 {filter.label}{" "}
-                <span className={active ? "text-teal-50" : "text-slate-400"}>
+                <span className={active ? "text-[var(--page-accent)]" : "text-slate-400"}>
                   {counts.get(filter.value) ?? 0}
                 </span>
               </Link>
@@ -289,7 +289,7 @@ export default async function RfqsPage({ searchParams }: PageProps) {
               <select
                 name="sort"
                 defaultValue={activeSort}
-                className="mt-2 h-10 rounded-md border border-slate-200 bg-white px-3 text-sm text-slate-950 outline-none transition focus:border-teal-500 focus:ring-2 focus:ring-teal-100"
+                className="accent-input mt-2 h-10 rounded-md px-3 text-sm"
               >
                 {sortOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -300,7 +300,7 @@ export default async function RfqsPage({ searchParams }: PageProps) {
             </label>
             <button
               type="submit"
-              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+              className="h-10 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[var(--page-accent-border)] hover:bg-[var(--page-accent-hover)] hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--page-accent-ring)]"
             >
               Apply
             </button>
@@ -329,10 +329,10 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                 rfqs.map((rfq) => (
                   <tr
                     key={rfq.id}
-                    className="transition hover:bg-slate-50"
+                    className="transition hover:bg-[var(--page-accent-hover)]"
                   >
                     <td className="whitespace-nowrap px-5 py-4 font-semibold text-slate-950">
-                      <Link href={`/rfqs/${rfq.id}`} className="hover:text-teal-700">
+                      <Link href={`/rfqs/${rfq.id}`} className="hover:text-[var(--page-accent)]">
                         {rfq.rfq_number}
                       </Link>
                     </td>
@@ -342,8 +342,8 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                     <td className="min-w-64 px-5 py-4 text-slate-700">
                       {rfq.subject}
                     </td>
-                    <td className="whitespace-nowrap px-5 py-4 text-slate-600">
-                      {labelizeRfqStatus(rfq.status)}
+                    <td className="whitespace-nowrap px-5 py-4">
+                      <StatusBadge status={rfq.status} />
                     </td>
                     <td className="whitespace-nowrap px-5 py-4 text-slate-600">
                       {labelizeRfqStatus(rfq.priority)}
@@ -376,6 +376,7 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                 <tr>
                   <td colSpan={9}>
                     <EmptyState
+                      icon={FileText}
                       title={
                         activeFilter.value === "all"
                           ? "No RFQs found"
@@ -392,13 +393,13 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                             <>
                               <Link
                                 href={queryString(params, { status: "all" })}
-                                className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                                className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[var(--page-accent-border)] hover:bg-[var(--page-accent-hover)] hover:text-slate-950"
                               >
                                 Clear filter
                               </Link>
                               <Link
                                 href="/rfqs"
-                                className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:text-slate-950"
+                                className="inline-flex h-10 items-center justify-center rounded-md border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-[var(--page-accent-border)] hover:bg-[var(--page-accent-hover)] hover:text-slate-950"
                               >
                                 View all RFQs
                               </Link>
@@ -406,7 +407,7 @@ export default async function RfqsPage({ searchParams }: PageProps) {
                           ) : null}
                           <Link
                             href="/rfqs/new"
-                            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                            className="inline-flex h-10 items-center justify-center rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--primary-strong)]"
                           >
                             Create RFQ
                           </Link>

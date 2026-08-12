@@ -1,5 +1,7 @@
+import { ClipboardList } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import {
   ReviewQueueTable,
   type ReviewQueueTableRow,
@@ -12,6 +14,7 @@ import {
   normalizeReviewStatus,
 } from "@/lib/rfqs/review-status";
 import { createClient } from "@/lib/supabase/server";
+import { pageThemeStyle } from "@/lib/page-themes";
 
 type PageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -211,16 +214,14 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
     quotesResponse.error;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <p className="text-sm font-medium text-teal-700">RFQ operations</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Review Queue
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Prioritize RFQs by assignment, review status, due date, customer, and requested-item search.
-        </p>
-      </div>
+    <div style={pageThemeStyle("reviewQueue")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="reviewQueue"
+        icon={ClipboardList}
+        eyebrow="RFQ operations"
+        title="Review Queue"
+        description="Prioritize RFQs by assignment, review status, due date, customer, and requested-item search."
+      />
 
       {dataError ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -230,7 +231,7 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
 
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
         {summary.map((item) => (
-          <Card key={item.status} className="p-4">
+          <Card key={item.status} accent="top" className="p-4 shadow-none">
             <p className="text-xs font-semibold uppercase text-slate-500">{labelizeReviewValue(item.status)}</p>
             <p className="mt-2 text-2xl font-semibold text-slate-950">{item.count}</p>
           </Card>
@@ -239,36 +240,36 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
 
       <Card className="p-4">
         <form className="grid gap-3 md:grid-cols-2 xl:grid-cols-8">
-          <select name="scope" defaultValue={scope} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="scope" defaultValue={scope} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="all">All RFQs</option>
             <option value="mine">My RFQs</option>
             <option value="unassigned">Unassigned</option>
           </select>
-          <select name="status" defaultValue={statusFilter} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="status" defaultValue={statusFilter} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="">Any status</option>
             {queueStatuses.map((status) => (
               <option key={status} value={status}>{labelizeReviewValue(status)}</option>
             ))}
           </select>
-          <select name="priority" defaultValue={priorityFilter} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="priority" defaultValue={priorityFilter} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="">Any priority</option>
             {["low", "normal", "high", "urgent"].map((priority) => (
               <option key={priority} value={priority}>{labelizeReviewValue(priority)}</option>
             ))}
           </select>
-          <select name="customer" defaultValue={customerFilter} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="customer" defaultValue={customerFilter} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="">Any customer</option>
             {(customersResponse.data ?? []).map((customer) => (
               <option key={customer.id} value={customer.id}>{customer.company_name}</option>
             ))}
           </select>
-          <select name="assigned" defaultValue={assignedFilter} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="assigned" defaultValue={assignedFilter} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="">Any assignee</option>
             {members.map((member) => (
               <option key={member.user_id} value={member.user_id}>{shortUser(member.user_id)} ({member.role})</option>
             ))}
           </select>
-          <select name="due" defaultValue={dueFilter} className="h-10 rounded-md border border-slate-200 px-3 text-sm">
+          <select name="due" defaultValue={dueFilter} className="accent-input h-10 rounded-md px-3 text-sm">
             <option value="">Any due date</option>
             <option value="overdue">Overdue</option>
             <option value="none">No due date</option>
@@ -277,9 +278,9 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
             name="search"
             defaultValue={search}
             placeholder="Search RFQ, customer, item..."
-            className="h-10 rounded-md border border-slate-200 px-3 text-sm xl:col-span-2"
+            className="accent-input h-10 rounded-md px-3 text-sm xl:col-span-2"
           />
-          <button className="h-10 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white xl:col-start-8">
+          <button className="h-10 rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--primary-strong)] xl:col-start-8">
             Filter
           </button>
         </form>
@@ -294,7 +295,7 @@ export default async function ReviewQueuePage({ searchParams }: PageProps) {
         />
       ) : (
         <Card>
-          <EmptyState title="No RFQs match this queue" description="Adjust filters or create an RFQ from Email Intake." />
+          <EmptyState icon={ClipboardList} title="No RFQs match this queue" description="Adjust filters or create an RFQ from Email Intake." />
         </Card>
       )}
     </div>

@@ -1,12 +1,18 @@
 import Link from "next/link";
+import { AlertTriangle, ArrowRight, CheckCircle2, Clock3, MailCheck, Plus, ShieldCheck } from "lucide-react";
+import { KpiStrip, PanelHeader } from "@/components/dashboard/kpi-strip";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { StatusBadge } from "@/components/ui/status-badge";
 import { requireOrganization } from "@/lib/auth/session";
+import { formatCurrency, formatDate, shortRfqNumber } from "@/lib/formatters";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 type RecentRfqRow = {
   id: string;
   rfq_number: string;
+  subject: string;
   status: string;
   submission_deadline: string | null;
   estimated_value: number | null;
@@ -20,108 +26,85 @@ type RecentRfqRow = {
     | null;
 };
 
-type ActivityRow = {
+type AttentionRfqRow = Pick<
+  RecentRfqRow,
+  "id" | "rfq_number" | "status" | "submission_deadline" | "customers"
+>;
+
+type PendingApprovalRow = {
   id: string;
-  action: string;
-  details: Record<string, unknown> | null;
-  created_at: string;
+  customer_quote_id: string | null;
+  customer_quotes:
+    | {
+        id: string;
+        quote_number: string;
+        rfqs:
+          | {
+              id: string;
+              rfq_number: string;
+              customers:
+                | {
+                    company_name: string;
+                  }
+                | {
+                    company_name: string;
+                  }[]
+                | null;
+            }
+          | {
+              id: string;
+              rfq_number: string;
+              customers:
+                | {
+                    company_name: string;
+                  }
+                | {
+                    company_name: string;
+                  }[]
+                | null;
+            }[]
+          | null;
+      }
+    | {
+        id: string;
+        quote_number: string;
+        rfqs:
+          | {
+              id: string;
+              rfq_number: string;
+              customers:
+                | {
+                    company_name: string;
+                  }
+                | {
+                    company_name: string;
+                  }[]
+                | null;
+            }
+          | {
+              id: string;
+              rfq_number: string;
+              customers:
+                | {
+                    company_name: string;
+                  }
+                | {
+                    company_name: string;
+                  }[]
+                | null;
+            }[]
+          | null;
+      }[]
+    | null;
 };
 
-function formatDate(value: string | null) {
-  if (!value) {
-    return "Not set";
-  }
-
-  return new Intl.DateTimeFormat("en", {
-    month: "short",
-    day: "2-digit",
-    year: "numeric",
-  }).format(new Date(value));
-}
-
-function formatCurrency(value: number, currency: string) {
-  return new Intl.NumberFormat("en", {
-    style: "currency",
-    currency,
-    maximumFractionDigits: 0,
-  }).format(value);
-}
-
-function labelize(value: string) {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function statusBadgeClass(status: string) {
-  if (["accepted", "approved", "healthy"].includes(status)) {
-    return "bg-teal-50 text-teal-700 ring-teal-100";
-  }
-
-  if (["awaiting_approval", "warning"].includes(status)) {
-    return "bg-amber-50 text-amber-700 ring-amber-100";
-  }
-
-  if (["declined", "rejected", "failed"].includes(status)) {
-    return "bg-rose-50 text-rose-700 ring-rose-100";
-  }
-
-  if (["in_review", "supplier_pricing", "sent"].includes(status)) {
-    return "bg-sky-50 text-sky-700 ring-sky-100";
-  }
-
-  return "bg-slate-100 text-slate-600 ring-slate-200";
-}
-
-function StatusBadge({ status }: { status: string }) {
-  return (
-    <span
-      className={`inline-flex h-6 items-center rounded-full px-2 text-[11px] font-semibold ring-1 ring-inset ${statusBadgeClass(status)}`}
-    >
-      {labelize(status)}
-    </span>
-  );
-}
-
-function MetricBlock({
-  label,
-  value,
-  helper,
-  accent = "border-slate-300",
-  primary = false,
-}: {
-  label: string;
-  value: string;
-  helper: string;
-  accent?: string;
-  primary?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-md border border-[#dfe4ea] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] ${accent} border-t-2`}
-    >
-      <p className="text-xs font-medium text-slate-500">{label}</p>
-      <p
-        className={
-          primary
-            ? "mt-2 text-[30px] font-semibold leading-none tracking-tight text-slate-950"
-            : "mt-2 text-2xl font-semibold leading-none tracking-tight text-slate-950"
-        }
-      >
-        {value}
-      </p>
-      <p className="mt-2 text-xs leading-5 text-slate-500">{helper}</p>
-    </div>
-  );
-}
-
-function customerName(row: RecentRfqRow) {
-  const customer = Array.isArray(row.customers)
-    ? row.customers[0]
-    : row.customers;
-
+function customerName(row: { customers: RecentRfqRow["customers"] }) {
+  const customer = Array.isArray(row.customers) ? row.customers[0] : row.customers;
   return customer?.company_name ?? "No customer";
+}
+
+function firstRelated<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
 
 function startOfMonthIso() {
@@ -129,9 +112,20 @@ function startOfMonthIso() {
   return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysFromToday(days: number) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 export default async function DashboardPage() {
   const organization = await requireOrganization();
   const supabase = await createClient();
+  const today = todayIsoDate();
 
   const [
     totalRfqs,
@@ -142,7 +136,10 @@ export default async function DashboardPage() {
     imapConnectionResponse,
     recentScanRunsResponse,
     recentRfqsResponse,
-    activityResponse,
+    overdueRfqsResponse,
+    missingDeadlineRfqs,
+    pendingApprovalResponse,
+    expiringQuotesResponse,
   ] = await Promise.all([
     supabase
       .from("rfqs")
@@ -184,55 +181,48 @@ export default async function DashboardPage() {
     supabase
       .from("rfqs")
       .select(
-        "id, rfq_number, status, submission_deadline, estimated_value, customers(company_name)",
+        "id, rfq_number, subject, status, submission_deadline, estimated_value, customers(company_name)",
       )
       .eq("organization_id", organization.id)
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(8),
     supabase
-      .from("activity_logs")
-      .select("id, action, details, created_at")
+      .from("rfqs")
+      .select("id, rfq_number, status, submission_deadline, customers(company_name)")
       .eq("organization_id", organization.id)
-      .order("created_at", { ascending: false })
-      .limit(5),
+      .not("status", "in", "(approved,accepted,declined,rejected,closed,cancelled)")
+      .lt("submission_deadline", today)
+      .order("submission_deadline", { ascending: true })
+      .limit(3),
+    supabase
+      .from("rfqs")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organization.id)
+      .not("status", "in", "(approved,accepted,declined,rejected,closed,cancelled)")
+      .is("submission_deadline", null),
+    supabase
+      .from("approval_requests")
+      .select(
+        "id, customer_quote_id, customer_quotes(id, quote_number, rfqs(id, rfq_number, customers(company_name)))",
+      )
+      .eq("organization_id", organization.id)
+      .eq("status", "pending")
+      .order("requested_at", { ascending: false })
+      .limit(3),
+    supabase
+      .from("customer_quotes")
+      .select("id", { count: "exact", head: true })
+      .eq("organization_id", organization.id)
+      .not("status", "in", "(accepted,declined,rejected,closed,cancelled)")
+      .gte("valid_until", today)
+      .lte("valid_until", daysFromToday(7)),
   ]);
 
   const quoteValueThisMonth =
-    monthlyQuotes.data?.reduce(
-      (sum, quote) => sum + Number(quote.total ?? 0),
-      0,
-    ) ?? 0;
-
-  const dashboardMetrics = [
-    {
-      label: "Total RFQs",
-      value: String(totalRfqs.count ?? 0),
-      helper: "All workspace records",
-    },
-    {
-      label: "Open RFQs",
-      value: String(openRfqs.count ?? 0),
-      helper: "Currently in progress",
-    },
-    {
-      label: "Awaiting supplier quotes",
-      value: String(supplierPricingRfqs.count ?? 0),
-      helper: "Pricing due soon",
-    },
-    {
-      label: "Awaiting approval",
-      value: String(pendingApprovalQuotes.count ?? 0),
-      helper: "Ready for buyer review",
-    },
-    {
-      label: "Quote value this month",
-      value: formatCurrency(quoteValueThisMonth, organization.currency),
-      helper: "Submitted quotes",
-    },
-    { label: "Win rate", value: "0%", helper: "Conversion trend" },
-  ];
+    monthlyQuotes.data?.reduce((sum, quote) => sum + Number(quote.total ?? 0), 0) ?? 0;
   const recentRfqs = (recentRfqsResponse.data ?? []) as RecentRfqRow[];
-  const activityLogs = (activityResponse.data ?? []) as ActivityRow[];
+  const overdueRfqs = (overdueRfqsResponse.data ?? []) as AttentionRfqRow[];
+  const approvals = (pendingApprovalResponse.data ?? []) as PendingApprovalRow[];
   const dataError =
     totalRfqs.error ??
     openRfqs.error ??
@@ -242,179 +232,270 @@ export default async function DashboardPage() {
     imapConnectionResponse.error ??
     recentScanRunsResponse.error ??
     recentRfqsResponse.error ??
-    activityResponse.error;
+    overdueRfqsResponse.error ??
+    missingDeadlineRfqs.error ??
+    pendingApprovalResponse.error ??
+    expiringQuotesResponse.error;
+
   const recentScanRuns = recentScanRunsResponse.data ?? [];
   const lastScanFailed = imapConnectionResponse.data?.last_scan_status === "failed";
   const repeatedFailures = recentScanRuns.filter((run) => run.status === "failed").length >= 3;
   const noNextScan =
     imapConnectionResponse.data?.auto_scan_enabled && !imapConnectionResponse.data?.next_scan_at;
   const mailboxHealth = lastScanFailed || repeatedFailures ? "Failed" : noNextScan ? "Warning" : "Healthy";
-  const mailboxStatusColor =
-    mailboxHealth === "Healthy"
-      ? "bg-teal-500"
-      : mailboxHealth === "Failed"
-        ? "bg-rose-500"
-        : "bg-amber-500";
-  const lastScanAt = imapConnectionResponse.data?.last_scan_at;
+
+  const kpis = [
+    { label: "Total RFQs", value: String(totalRfqs.count ?? 0), href: "/rfqs", indicator: "neutral" as const },
+    { label: "Open", value: String(openRfqs.count ?? 0), href: "/rfqs", helper: "In progress", indicator: "teal" as const },
+    {
+      label: "Supplier Responses",
+      value: String(supplierPricingRfqs.count ?? 0),
+      href: "/rfqs?status=supplier_pricing",
+      helper: "Awaiting pricing",
+      indicator: "blue" as const,
+    },
+    {
+      label: "Approvals",
+      value: String(pendingApprovalQuotes.count ?? 0),
+      href: "/approvals?status=pending",
+      helper: "Pending review",
+      indicator: "amber" as const,
+    },
+    {
+      label: "Quote Value",
+      value: formatCurrency(quoteValueThisMonth, organization.currency),
+      href: "/quotes",
+      helper: "This month",
+      indicator: "teal" as const,
+    },
+  ];
+
+  const attentionItems = [
+    ...overdueRfqs.map((rfq) => ({
+      key: `overdue-${rfq.id}`,
+      label: `${shortRfqNumber(rfq.rfq_number)} is past its deadline`,
+      detail: customerName(rfq),
+      href: `/rfqs/${rfq.id}`,
+      action: "Open",
+    })),
+    ...(Number(missingDeadlineRfqs.count ?? 0) > 0
+      ? [
+          {
+            key: "missing-deadlines",
+            label: `${missingDeadlineRfqs.count ?? 0} active RFQs are missing deadlines`,
+            detail: "Set due dates for better follow-up",
+            href: "/rfqs",
+            action: "View",
+          },
+        ]
+      : []),
+    ...approvals.map((approval) => {
+      const quote = firstRelated(approval.customer_quotes);
+      const rfq = firstRelated(quote?.rfqs);
+      return {
+        key: `approval-${approval.id}`,
+        label: `${rfq ? shortRfqNumber(rfq.rfq_number) : "A quote"} is awaiting approval`,
+        detail: quote?.quote_number ?? "Pending approval request",
+        href: quote && rfq ? `/rfqs/${rfq.id}/customer-quotes/${quote.id}` : "/approvals?status=pending",
+        action: "Review",
+      };
+    }),
+  ].slice(0, 5);
+
+  const tasks = [
+    { label: "Approvals", value: pendingApprovalQuotes.count ?? 0, href: "/approvals?status=pending", icon: ShieldCheck, tone: "text-emerald-700 bg-emerald-50" },
+    { label: "Supplier responses", value: supplierPricingRfqs.count ?? 0, href: "/rfqs?status=supplier_pricing", icon: MailCheck, tone: "text-blue-700 bg-blue-50" },
+    { label: "Overdue RFQs", value: overdueRfqsResponse.count ?? overdueRfqs.length, href: "/rfqs", icon: AlertTriangle, tone: Number(overdueRfqsResponse.count ?? overdueRfqs.length) > 0 ? "text-rose-700 bg-rose-50" : "text-slate-500 bg-slate-100" },
+    { label: "Quotes expiring", value: expiringQuotesResponse.count ?? 0, href: "/quotes", icon: Clock3, tone: "text-violet-700 bg-violet-50" },
+  ];
 
   return (
-    <div className="space-y-5">
-      <div className="border-b border-[#dfe4ea] pb-4">
-        <p className="text-xs font-semibold uppercase tracking-wide text-teal-700">
-          Workspace overview
-        </p>
-        <h1 className="mt-1 text-[29px] font-semibold leading-tight tracking-tight text-slate-950">
-          Dashboard
-        </h1>
-        <p className="mt-2 max-w-[760px] text-[15px] leading-6 text-slate-600">
-          Monitor RFQ activity, pending supplier responses, approval workload,
-          and quote performance across the selected organization.
-        </p>
+    <div style={pageThemeStyle("dashboard")} className="page-accent-scope mx-auto max-w-[1500px] space-y-5">
+      <div className="flex flex-col gap-4 border-b border-[var(--border)] pb-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-950">Dashboard</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {organization.name} procurement workspace
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/settings/email/monitoring"
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-white px-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+          >
+            <span
+              className={`h-2 w-2 rounded-full ${
+                mailboxHealth === "Healthy"
+                  ? "bg-emerald-500"
+                  : mailboxHealth === "Failed"
+                    ? "bg-rose-500"
+                    : "bg-amber-500"
+              }`}
+            />
+            Email intake {mailboxHealth.toLowerCase()}
+          </Link>
+          <Link
+            href="/rfqs/new"
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-[var(--primary)] px-3.5 text-sm font-semibold text-white transition hover:bg-[var(--primary-strong)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+          >
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            New RFQ
+          </Link>
+        </div>
       </div>
 
       {dataError ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          {dataError.message}
+          Unable to load dashboard data. Try refreshing the page.
         </div>
       ) : null}
 
-      <Card className="p-4">
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-12">
-          <Link href="/settings/email/monitoring" className="block xl:col-span-2">
-            <div className="h-full rounded-md border border-[#dfe4ea] bg-slate-50 px-4 py-3.5 transition hover:border-teal-200 hover:bg-white">
-              <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${mailboxStatusColor}`} />
-                <p className="text-xs font-medium text-slate-500">Mailbox health</p>
-              </div>
-              <p className="mt-2 text-xl font-semibold text-slate-950">
-                {mailboxHealth}
-              </p>
-              <p className="mt-2 text-xs leading-5 text-slate-500">
-                {lastScanAt ? `Last scan ${formatDate(lastScanAt)}` : "Open Scan Monitoring"}
-              </p>
-            </div>
-          </Link>
-          <div className="xl:col-span-3">
-            <MetricBlock {...dashboardMetrics[0]} primary accent="border-teal-500" />
-          </div>
-          <div className="xl:col-span-3">
-            <MetricBlock {...dashboardMetrics[1]} primary accent="border-slate-700" />
-          </div>
-          <div className="md:col-span-2 xl:col-span-4">
-            <MetricBlock {...dashboardMetrics[4]} primary accent="border-slate-500" />
-          </div>
-          <div className="xl:col-span-4">
-            <MetricBlock {...dashboardMetrics[2]} accent="border-sky-500" />
-          </div>
-          <div className="xl:col-span-4">
-            <MetricBlock {...dashboardMetrics[3]} accent="border-amber-500" />
-          </div>
-          <div className="xl:col-span-4">
-            <MetricBlock {...dashboardMetrics[5]} accent="border-teal-500" />
-          </div>
-        </div>
-      </Card>
+      <KpiStrip items={kpis} />
 
-      <Card className="overflow-hidden">
-        <div className="grid xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,0.75fr)]">
-          <div className="min-w-0 border-b border-[#dfe4ea] xl:border-b-0 xl:border-r">
-            <div className="flex min-h-14 items-center justify-between border-b border-[#dfe4ea] px-4 py-3">
-              <h2 className="text-[18px] font-semibold text-slate-950">
-                Recent RFQs
-              </h2>
-              <Link href="/rfqs" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
-                View all
-              </Link>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <Card className="overflow-hidden shadow-none">
+          <PanelHeader title="Needs Attention" />
+          {attentionItems.length > 0 ? (
+            <div className="divide-y divide-slate-100 p-3">
+              {attentionItems.map((item) => (
+                <Link
+                  key={item.key}
+                  href={item.href}
+                  className="flex items-center gap-3 rounded-md border border-amber-100 bg-amber-50/60 px-3 py-3 transition hover:bg-amber-50 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-amber-50 text-amber-700">
+                    <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold text-slate-950">
+                      {item.label}
+                    </span>
+                    <span className="block truncate text-xs text-slate-500">{item.detail}</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--primary)]">
+                    {item.action}
+                    <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                </Link>
+              ))}
             </div>
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-[#dfe4ea] text-sm">
-                <thead className="bg-slate-50/80 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                <tr>
-                  <th className="px-4 py-2.5">RFQ</th>
-                  <th className="px-4 py-2.5">Customer</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5">Deadline</th>
-                  <th className="px-4 py-2.5 text-right">Value</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 bg-white">
-                {recentRfqs.length > 0 ? (
-                  recentRfqs.map((rfq) => (
-                    <tr key={rfq.id} className="transition hover:bg-slate-50">
-                      <td className="whitespace-nowrap px-4 py-3 font-semibold text-slate-950">
-                        <Link href={`/rfqs/${rfq.id}`} className="hover:text-teal-700">
-                          {rfq.rfq_number}
-                        </Link>
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                        {customerName(rfq)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                        <StatusBadge status={rfq.status} />
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                        {formatDate(rfq.submission_deadline)}
-                      </td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
-                        {formatCurrency(
-                          Number(rfq.estimated_value ?? 0),
-                          organization.currency,
-                        )}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={5}>
-                      <EmptyState
-                        title="No RFQs yet"
-                        description="Create your first RFQ to start tracking customer requests and supplier pricing."
-                        action={
-                          <Link
-                            href="/rfqs/new"
-                            className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-                          >
-                            Create RFQ
-                          </Link>
-                        }
-                      />
+          ) : (
+            <div className="flex min-h-52 flex-col items-center justify-center px-4 text-center">
+              <CheckCircle2 className="h-8 w-8 text-emerald-600" aria-hidden="true" />
+              <p className="mt-3 text-sm font-semibold text-slate-950">You&apos;re all caught up.</p>
+              <p className="mt-1 text-sm text-slate-500">No RFQs or approvals need immediate action.</p>
+            </div>
+          )}
+        </Card>
+
+        <Card className="overflow-hidden shadow-none">
+          <PanelHeader title="My Tasks" />
+          <div className="divide-y divide-slate-100">
+            {tasks.map((task) => {
+              const Icon = task.icon;
+
+              return (
+              <Link
+                key={task.label}
+                href={task.href}
+                className="flex items-center justify-between px-4 py-3 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+              >
+                <span className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <span className={`flex h-7 w-7 items-center justify-center rounded-md ${task.tone}`}>
+                    <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+                  </span>
+                  {task.label}
+                </span>
+                <span className="text-sm font-semibold text-slate-950">{task.value}</span>
+              </Link>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
+
+      <Card className="overflow-hidden shadow-none">
+        <PanelHeader
+          title="Recent RFQs"
+          action={
+            <Link href="/rfqs" className="text-sm font-semibold text-[var(--primary)] hover:text-[var(--primary-strong)]">
+              View all
+            </Link>
+          }
+        />
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-slate-200 text-sm">
+            <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500">
+              <tr>
+                <th className="px-4 py-2.5">RFQ</th>
+                <th className="px-4 py-2.5">Customer</th>
+                <th className="px-4 py-2.5">Status</th>
+                <th className="px-4 py-2.5">Due</th>
+                <th className="px-4 py-2.5 text-right">Value</th>
+                <th className="px-4 py-2.5 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 bg-white">
+              {recentRfqs.length > 0 ? (
+                recentRfqs.map((rfq) => (
+                  <tr key={rfq.id} className="h-12 transition hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <Link
+                        href={`/rfqs/${rfq.id}`}
+                        title={rfq.rfq_number}
+                        className="font-semibold text-slate-950 hover:text-[var(--primary)]"
+                      >
+                        {shortRfqNumber(rfq.rfq_number)}
+                      </Link>
+                      <p className="max-w-[260px] truncate text-xs text-slate-500">{rfq.subject}</p>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">{customerName(rfq)}</td>
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <StatusBadge status={rfq.status} />
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-600">
+                      {formatDate(rfq.submission_deadline)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right font-semibold text-slate-950">
+                      {formatCurrency(rfq.estimated_value, organization.currency)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <Link
+                        href={`/rfqs/${rfq.id}`}
+                        className="inline-flex h-8 items-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
+                      >
+                        Open
+                      </Link>
                     </td>
                   </tr>
-                )}
-              </tbody>
-            </table>
-            </div>
-          </div>
-
-          <div className="min-w-0 p-4">
-            <h2 className="text-[18px] font-semibold text-slate-950">
-              Activity feed
-            </h2>
-            {activityLogs.length > 0 ? (
-              <div className="relative mt-4 space-y-4 before:absolute before:bottom-2 before:left-[5px] before:top-2 before:w-px before:bg-slate-200">
-                {activityLogs.map((activity) => (
-                  <div key={activity.id} className="relative flex gap-3">
-                    <span className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full border-2 border-white bg-teal-500 ring-1 ring-teal-100" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold leading-5 text-slate-950">
-                        {activity.action}
-                      </p>
-                      <p className="mt-0.5 text-sm leading-5 text-slate-600">
-                        {String(activity.details?.subject ?? "Workspace updated")}
-                      </p>
-                      <p className="mt-1 text-xs font-medium text-slate-400">
-                        {formatDate(activity.created_at)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <EmptyState title="No activity yet" className="min-h-80" />
-            )}
-          </div>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6}>
+                    <EmptyState
+                      title="No RFQs yet"
+                      description="Create your first RFQ to start tracking customer requests and supplier pricing."
+                      action={
+                        <Link
+                          href="/rfqs/new"
+                          className="inline-flex h-9 items-center justify-center rounded-md bg-[var(--primary)] px-3.5 text-sm font-semibold text-white transition hover:bg-[var(--primary-strong)]"
+                        >
+                          Create RFQ
+                        </Link>
+                      }
+                    />
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </Card>
+
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <MailCheck className="h-3.5 w-3.5" aria-hidden="true" />
+        Technical scan history remains available in Email Scan Monitoring.
+      </div>
     </div>
   );
 }

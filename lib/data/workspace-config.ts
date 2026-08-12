@@ -2,15 +2,6 @@ import { RFQ_STATUS_FILTERS } from "@/lib/rfqs/status";
 
 export const rfqStatusTabs = RFQ_STATUS_FILTERS.map((filter) => filter.label);
 
-export const dashboardMetrics = [
-  { label: "Total RFQs", value: "0", helper: "All workspace records" },
-  { label: "Open RFQs", value: "0", helper: "Currently in progress" },
-  { label: "Awaiting supplier quotes", value: "0", helper: "Pricing due soon" },
-  { label: "Awaiting approval", value: "0", helper: "Ready for buyer review" },
-  { label: "Quote value this month", value: "$0", helper: "Submitted quotes" },
-  { label: "Win rate", value: "0%", helper: "Conversion trend" },
-];
-
 export const settingsSections = [
   "Organization profile",
   "Branding",

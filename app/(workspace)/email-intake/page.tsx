@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { Inbox, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { DeleteEmailIntakeButton } from "@/components/email-intake/delete-email-button";
 import { requireOrganization } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 type EmailMessage = {
@@ -101,38 +104,34 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
   const canDeleteEmail = deleteEmailRoles.has(organization.role);
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <p className="text-sm font-medium text-teal-700">
-            Manual email intake
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-            Email Intake
-          </h1>
-          <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-            Review RFQ-related emails from manual, IMAP, and Microsoft 365
-            intake, then convert requests into tracked RFQs.
-          </p>
-        </div>
+    <div style={pageThemeStyle("emailIntake")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="emailIntake"
+        icon={Inbox}
+        eyebrow="Manual email intake"
+        title="Email Intake"
+        description="Review RFQ-related emails from manual, IMAP, and Microsoft 365 intake, then convert requests into tracked RFQs."
+        action={
         <Link
           href="/email-intake/new"
-          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--primary-strong)]"
         >
+          <Plus className="h-4 w-4" aria-hidden="true" />
           Log Email
         </Link>
-      </div>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         <Link
           href="/email-intake?mode=conversations"
-          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "border border-slate-200 bg-white text-slate-700" : "bg-slate-950 text-white"}`}
+          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "border border-slate-200 bg-white text-slate-700 hover:bg-[var(--page-accent-hover)]" : "border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] text-[var(--page-accent)]"}`}
         >
           Conversations
         </Link>
         <Link
           href="/email-intake?mode=individual"
-          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "bg-slate-950 text-white" : "border border-slate-200 bg-white text-slate-700"}`}
+          className={`rounded-md px-3 py-2 text-sm font-semibold ${mode === "individual" ? "border border-[var(--page-accent-border)] bg-[var(--page-accent-soft)] text-[var(--page-accent)]" : "border border-slate-200 bg-white text-slate-700 hover:bg-[var(--page-accent-hover)]"}`}
         >
           Individual messages
         </Link>
@@ -148,7 +147,7 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
         <div
           tabIndex={0}
           aria-label="Email intake table"
-          className="w-full max-w-full overflow-auto outline-none focus:ring-2 focus:ring-inset focus:ring-teal-200 lg:max-h-[calc(100vh-240px)]"
+          className="w-full max-w-full overflow-auto outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--page-accent-border)] lg:max-h-[calc(100vh-240px)]"
         >
           <table className="w-full min-w-full table-fixed divide-y divide-slate-200 text-sm max-lg:min-w-[1080px]">
             <colgroup>
@@ -192,8 +191,8 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
             <tbody className="divide-y divide-slate-100 bg-white">
               {rows.length ? (
                 rows.map((email) => (
-                  <tr key={email.id} className="group transition hover:bg-slate-50">
-                    <td className="sticky left-0 z-10 overflow-hidden border-r border-slate-100 bg-white px-4 py-4 shadow-[8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-slate-50">
+                  <tr key={email.id} className="group transition hover:bg-[var(--page-accent-hover)]">
+                    <td className="sticky left-0 z-10 overflow-hidden border-r border-slate-100 bg-white px-4 py-4 shadow-[8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-[var(--page-accent-hover)]">
                       <p className="truncate font-semibold text-slate-950">
                         {email.latestSender}
                       </p>
@@ -205,7 +204,7 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
                       <Link
                         href={`/email-intake/${email.id}`}
                         title={email.subject}
-                        className="block truncate font-semibold text-slate-950 hover:text-teal-700"
+                        className="block truncate font-semibold text-slate-950 hover:text-[var(--page-accent)]"
                       >
                         {email.subject}
                       </Link>
@@ -233,7 +232,7 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
                         {email.messageCount}
                       </span>
                     </td>
-                    <td className="sticky right-0 z-10 border-l border-slate-100 bg-white px-3 py-4 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-slate-50">
+                    <td className="sticky right-0 z-10 border-l border-slate-100 bg-white px-3 py-4 text-right shadow-[-8px_0_12px_-12px_rgba(15,23,42,0.35)] group-hover:bg-[var(--page-accent-hover)]">
                       <div className="flex flex-nowrap justify-end gap-2 whitespace-nowrap">
                         <Link
                           href={`/email-intake/${email.id}`}
@@ -244,7 +243,7 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
                         {email.rfq_id ? (
                           <Link
                             href={`/rfqs/${email.rfq_id}`}
-                            className="rounded-md border border-teal-200 bg-white px-2.5 py-2 text-xs font-semibold text-teal-700 shadow-sm transition hover:border-teal-300 hover:text-teal-800"
+                            className="rounded-md border border-[var(--page-accent-border)] bg-white px-2.5 py-2 text-xs font-semibold text-[var(--page-accent)] shadow-sm transition hover:border-[var(--page-accent)]"
                           >
                             Open RFQ
                           </Link>
@@ -265,12 +264,13 @@ export default async function EmailIntakePage({ searchParams }: PageProps) {
                 <tr>
                   <td colSpan={8}>
                     <EmptyState
+                      icon={Inbox}
                       title="No manually logged emails yet"
                       description="Emails logged by your team will appear here for RFQ review."
                       action={
                         <Link
                           href="/email-intake/new"
-                          className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+                          className="inline-flex h-10 items-center justify-center rounded-md bg-[var(--primary)] px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--primary-strong)]"
                         >
                           Log Email
                         </Link>

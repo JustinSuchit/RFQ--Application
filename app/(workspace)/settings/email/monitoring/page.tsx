@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { Activity } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
+import { PageHeader } from "@/components/ui/page-header";
 import { ScanMonitoringActions } from "@/components/settings/scan-monitoring-actions";
 import { requireOrganization } from "@/lib/auth/session";
+import { pageThemeStyle } from "@/lib/page-themes";
 import { createClient } from "@/lib/supabase/server";
 
 type ConnectionRow = {
@@ -126,19 +129,18 @@ export default async function ScanMonitoringPage() {
   const error = connectionResponse.error ?? runsResponse.error;
 
   return (
-    <div className="space-y-6">
-      <div>
-        <Link href="/settings/email" className="text-sm font-semibold text-teal-700 hover:text-teal-800">
+    <div style={pageThemeStyle("integrations")} className="page-accent-scope space-y-6">
+      <PageHeader
+        theme="integrations"
+        icon={Activity}
+        eyebrow="Mailbox operations"
+        title="Scan Monitoring"
+        description="Monitor IMAP scan health, scheduled runs, recent results, and safe operational controls."
+      >
+        <Link href="/settings/email" className="text-sm font-semibold text-[var(--page-accent)] hover:opacity-80">
           Back to Email Settings
         </Link>
-        <p className="mt-4 text-sm font-medium text-teal-700">Mailbox operations</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-slate-950">
-          Scan Monitoring
-        </h1>
-        <p className="mt-3 max-w-3xl text-base leading-7 text-slate-600">
-          Monitor IMAP scan health, scheduled runs, recent results, and safe operational controls.
-        </p>
-      </div>
+      </PageHeader>
 
       {error ? (
         <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
