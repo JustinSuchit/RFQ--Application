@@ -54,10 +54,8 @@ type PendingExtractedItem = {
 };
 
 const inactiveRfqStatuses = new Set([
-  "approved",
   "accepted",
   "declined",
-  "rejected",
   "closed",
   "cancelled",
 ]);

@@ -188,7 +188,11 @@ export async function approveCustomerQuoteAction(
 
   const { error: rfqUpdateError } = await supabase
     .from("rfqs")
-    .update({ status: "approved" })
+    .update({
+      review_status: "ready_to_send",
+      next_action: "Send approved quote",
+      last_activity_at: new Date().toISOString(),
+    })
     .eq("id", rfqId)
     .eq("organization_id", organization.id);
 
@@ -295,7 +299,11 @@ export async function rejectCustomerQuoteAction(
 
   const { error: rfqUpdateError } = await supabase
     .from("rfqs")
-    .update({ status: "in_review" })
+    .update({
+      review_status: "needs_review",
+      next_action: "Review rejected quote",
+      last_activity_at: new Date().toISOString(),
+    })
     .eq("id", rfqId)
     .eq("organization_id", organization.id);
 

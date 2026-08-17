@@ -26,14 +26,10 @@ export type ReviewStatusInput = {
 };
 
 const completedRfqStatuses = new Set([
-  "approved",
   "accepted",
   "declined",
-  "rejected",
   "closed",
   "cancelled",
-  "won",
-  "lost",
 ]);
 
 const manualStatuses = new Set<ReviewStatus>([

@@ -186,7 +186,11 @@ export async function createSupplierQuoteAction(
 
   const { error: statusUpdateError } = await supabase
     .from("rfqs")
-    .update({ status: "supplier_pricing" })
+    .update({
+      review_status: "awaiting_pricing",
+      next_action: "Review supplier pricing",
+      last_activity_at: new Date().toISOString(),
+    })
     .eq("id", rfqId)
     .eq("organization_id", organization.id);
 

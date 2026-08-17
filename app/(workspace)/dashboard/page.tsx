@@ -149,12 +149,12 @@ export default async function DashboardPage() {
       .from("rfqs")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organization.id)
-      .not("status", "in", "(approved,accepted,declined,rejected,closed,cancelled)"),
+      .not("status", "in", "(accepted,declined,closed,cancelled)"),
     supabase
       .from("rfqs")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organization.id)
-      .eq("status", "supplier_pricing"),
+      .eq("review_status", "awaiting_pricing"),
     supabase
       .from("customer_quotes")
       .select("id", { count: "exact", head: true })
@@ -190,7 +190,7 @@ export default async function DashboardPage() {
       .from("rfqs")
       .select("id, rfq_number, status, submission_deadline, customers(company_name)")
       .eq("organization_id", organization.id)
-      .not("status", "in", "(approved,accepted,declined,rejected,closed,cancelled)")
+      .not("status", "in", "(accepted,declined,closed,cancelled)")
       .lt("submission_deadline", today)
       .order("submission_deadline", { ascending: true })
       .limit(3),
@@ -198,7 +198,7 @@ export default async function DashboardPage() {
       .from("rfqs")
       .select("id", { count: "exact", head: true })
       .eq("organization_id", organization.id)
-      .not("status", "in", "(approved,accepted,declined,rejected,closed,cancelled)")
+      .not("status", "in", "(accepted,declined,closed,cancelled)")
       .is("submission_deadline", null),
     supabase
       .from("approval_requests")
@@ -250,7 +250,7 @@ export default async function DashboardPage() {
     {
       label: "Supplier Responses",
       value: String(supplierPricingRfqs.count ?? 0),
-      href: "/rfqs?status=supplier_pricing",
+      href: "/review-queue?status=awaiting_pricing",
       helper: "Awaiting pricing",
       indicator: "blue" as const,
     },
@@ -304,7 +304,7 @@ export default async function DashboardPage() {
 
   const tasks = [
     { label: "Approvals", value: pendingApprovalQuotes.count ?? 0, href: "/approvals?status=pending", icon: ShieldCheck, tone: "text-emerald-700 bg-emerald-50" },
-    { label: "Supplier responses", value: supplierPricingRfqs.count ?? 0, href: "/rfqs?status=supplier_pricing", icon: MailCheck, tone: "text-blue-700 bg-blue-50" },
+    { label: "Supplier responses", value: supplierPricingRfqs.count ?? 0, href: "/review-queue?status=awaiting_pricing", icon: MailCheck, tone: "text-blue-700 bg-blue-50" },
     { label: "Overdue RFQs", value: overdueRfqsResponse.count ?? overdueRfqs.length, href: "/rfqs", icon: AlertTriangle, tone: Number(overdueRfqsResponse.count ?? overdueRfqs.length) > 0 ? "text-rose-700 bg-rose-50" : "text-slate-500 bg-slate-100" },
     { label: "Quotes expiring", value: expiringQuotesResponse.count ?? 0, href: "/quotes", icon: Clock3, tone: "text-violet-700 bg-violet-50" },
   ];

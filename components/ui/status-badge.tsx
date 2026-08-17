@@ -23,7 +23,7 @@ export function statusTone(status: string): StatusTone {
     return "danger";
   }
 
-  if (["in_review", "supplier_pricing", "sent", "running", "processing"].includes(status)) {
+  if (["sent", "running", "processing"].includes(status)) {
     return "processing";
   }
 

@@ -1,36 +1,26 @@
 export const RFQ_STATUSES = [
   "draft",
-  "new",
-  "in_review",
-  "supplier_pricing",
   "awaiting_approval",
-  "sent",
-  "approved",
   "accepted",
   "declined",
-  "rejected",
   "closed",
+  "cancelled",
 ] as const;
 
 export type RfqStatusValue = (typeof RFQ_STATUSES)[number];
 
 export const RFQ_STATUS_FILTERS = [
   { label: "All", value: "all", dbValues: [] },
-  { label: "New", value: "new", dbValues: ["new", "draft"] },
-  { label: "In Review", value: "in_review", dbValues: ["in_review"] },
-  {
-    label: "Supplier Pricing",
-    value: "supplier_pricing",
-    dbValues: ["supplier_pricing"],
-  },
+  { label: "Draft", value: "draft", dbValues: ["draft"] },
   {
     label: "Awaiting Approval",
     value: "awaiting_approval",
     dbValues: ["awaiting_approval"],
   },
-  { label: "Sent", value: "sent", dbValues: ["sent"] },
-  { label: "Accepted", value: "accepted", dbValues: ["accepted", "approved"] },
-  { label: "Declined", value: "declined", dbValues: ["declined", "rejected", "closed"] },
+  { label: "Accepted", value: "accepted", dbValues: ["accepted"] },
+  { label: "Declined", value: "declined", dbValues: ["declined"] },
+  { label: "Closed", value: "closed", dbValues: ["closed"] },
+  { label: "Cancelled", value: "cancelled", dbValues: ["cancelled"] },
 ] as const;
 
 export type RfqStatusFilterValue = (typeof RFQ_STATUS_FILTERS)[number]["value"];

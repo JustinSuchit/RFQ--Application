@@ -139,6 +139,7 @@ export async function createRfqAction(
         source,
         priority,
         status: "draft",
+        review_status: "new",
         submission_deadline: submissionDeadline,
         delivery_location: deliveryLocation,
         notes,

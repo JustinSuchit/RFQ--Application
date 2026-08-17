@@ -26,7 +26,7 @@ export function StatusControl({ rfqId, currentStatus }: StatusControlProps) {
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="rfqId" value={rfqId} />
       <label className="block text-sm font-semibold text-slate-700">
-        Update status
+        Update commercial status
         <div className="mt-2 flex gap-2">
           <select
             name="status"

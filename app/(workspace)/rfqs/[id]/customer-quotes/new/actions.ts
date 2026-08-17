@@ -374,14 +374,24 @@ export async function createCustomerQuoteAction(
     }
   }
 
+  const rfqUpdatePayload: {
+    status?: "awaiting_approval";
+    review_status: "awaiting_approval" | "ready_to_send";
+    next_action: string;
+    last_activity_at: string;
+  } = {
+    review_status: triggeredRules.length > 0 ? "awaiting_approval" : "ready_to_send",
+    next_action: triggeredRules.length > 0 ? "Submit quote for approval" : "Send approved quote",
+    last_activity_at: new Date().toISOString(),
+  };
+
+  if (triggeredRules.length > 0) {
+    rfqUpdatePayload.status = "awaiting_approval";
+  }
+
   const { error: statusUpdateError } = await supabase
     .from("rfqs")
-    .update({
-      status: triggeredRules.length > 0 ? "awaiting_approval" : "supplier_pricing",
-      review_status: triggeredRules.length > 0 ? "awaiting_approval" : "ready_to_send",
-      next_action: triggeredRules.length > 0 ? "Submit quote for approval" : "Send approved quote",
-      last_activity_at: new Date().toISOString(),
-    })
+    .update(rfqUpdatePayload)
     .eq("id", rfqId)
     .eq("organization_id", organization.id);
 
