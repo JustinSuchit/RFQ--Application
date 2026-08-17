@@ -28,13 +28,27 @@ function Message({ state }: { state: EmailIntakeState }) {
 
 export function ExtractAttachmentButton({
   attachmentId,
+  ocrStatus,
 }: {
   attachmentId: string;
+  ocrStatus?: string | null;
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  const normalizedStatus = ocrStatus || "pending";
+  const actionLabel =
+    normalizedStatus === "failed" ? "Retry Extraction" : "Extract Text";
+  const disabled = pending || normalizedStatus === "processing";
+
+  if (normalizedStatus === "completed") {
+    return <p className="text-xs font-semibold text-teal-700">Extraction completed</p>;
+  }
+
+  if (normalizedStatus === "skipped") {
+    return <p className="text-xs font-semibold text-slate-500">Unsupported attachment</p>;
+  }
 
   async function extract() {
     setPending(true);
@@ -97,11 +111,11 @@ export function ExtractAttachmentButton({
     <div className="flex flex-col gap-2">
       <button
         type="button"
-        disabled={pending}
+        disabled={disabled}
         onClick={extract}
         className="inline-flex h-9 items-center justify-center rounded-md border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {pending ? "Extracting..." : "Extract Text"}
+        {pending || normalizedStatus === "processing" ? "Extracting..." : actionLabel}
       </button>
       {message ? (
         <p

@@ -23,6 +23,12 @@ function safeStorageFileName(fileName: string) {
 
 export async function POST(_request: Request, context: RouteContext) {
   const { attachmentId } = await context.params;
+  let failureUpdate:
+    | {
+        supabase: Awaited<ReturnType<typeof createClient>>;
+        organizationId: string;
+      }
+    | null = null;
 
   try {
     const user = await getCurrentUser();
@@ -42,6 +48,7 @@ export async function POST(_request: Request, context: RouteContext) {
     }
 
     const supabase = await createClient();
+    failureUpdate = { supabase, organizationId: organization.id };
     const { data: attachment, error: attachmentError } = await supabase
       .from("email_attachments")
       .select("id, email_message_id, provider_attachment_id, file_name, content_type, size_bytes")
@@ -175,6 +182,15 @@ export async function POST(_request: Request, context: RouteContext) {
       attachment.provider_attachment_id,
     );
     if (!downloaded.contentBuffer) {
+      await supabase
+        .from("email_attachments")
+        .update({
+          ocr_status: "failed",
+          extraction_error: "Attachment contentBytes missing.",
+        })
+        .eq("id", attachment.id)
+        .eq("organization_id", organization.id);
+
       return Response.json(
         {
           success: false,
@@ -245,6 +261,16 @@ export async function POST(_request: Request, context: RouteContext) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Microsoft attachment download failed.";
+    if (failureUpdate) {
+      await failureUpdate.supabase
+        .from("email_attachments")
+        .update({
+          ocr_status: "failed",
+          extraction_error: message,
+        })
+        .eq("id", attachmentId)
+        .eq("organization_id", failureUpdate.organizationId);
+    }
 
     return Response.json(
       {

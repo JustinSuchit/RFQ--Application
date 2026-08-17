@@ -857,7 +857,10 @@ export default async function RfqDetailPage({ params }: PageProps) {
                               </>
                             ) : null}
                             {attachment.storage_path ? (
-                              <ExtractAttachmentButton attachmentId={attachment.id} />
+                              <ExtractAttachmentButton
+                                attachmentId={attachment.id}
+                                ocrStatus={attachment.ocr_status}
+                              />
                             ) : null}
                           </div>
                         </div>

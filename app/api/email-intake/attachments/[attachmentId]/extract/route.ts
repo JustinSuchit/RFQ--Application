@@ -44,8 +44,104 @@ type RouteContext = {
   }>;
 };
 
+type BeginAttachmentExtractionResult = {
+  ok: boolean;
+  claimed: boolean;
+  ocr_run_id: string | null;
+  ocr_attempts: number;
+  error_message: string | null;
+};
+
+type ReplaceAttachmentExtractedItemsResult = {
+  ok: boolean;
+  inserted_count: number;
+  preserved_count: number;
+  error_message: string | null;
+};
+
+type SupabaseClient = Awaited<ReturnType<typeof createClient>>;
+
+function normalizeBeginAttachmentExtractionResult(
+  data: unknown,
+): BeginAttachmentExtractionResult | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== "object") return null;
+
+  const result = row as Partial<BeginAttachmentExtractionResult>;
+  return {
+    ok: Boolean(result.ok),
+    claimed: Boolean(result.claimed),
+    ocr_run_id:
+      typeof result.ocr_run_id === "string" ? result.ocr_run_id : null,
+    ocr_attempts:
+      typeof result.ocr_attempts === "number" ? result.ocr_attempts : 0,
+    error_message:
+      typeof result.error_message === "string" ? result.error_message : null,
+  };
+}
+
+function normalizeReplaceAttachmentExtractedItemsResult(
+  data: unknown,
+): ReplaceAttachmentExtractedItemsResult | null {
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row || typeof row !== "object") return null;
+
+  const result = row as Partial<ReplaceAttachmentExtractedItemsResult>;
+  return {
+    ok: Boolean(result.ok),
+    inserted_count:
+      typeof result.inserted_count === "number" ? result.inserted_count : 0,
+    preserved_count:
+      typeof result.preserved_count === "number" ? result.preserved_count : 0,
+    error_message:
+      typeof result.error_message === "string" ? result.error_message : null,
+  };
+}
+
+function claimStatusCode(message: string | null) {
+  const normalized = (message || "").toLowerCase();
+  if (normalized.includes("not found")) return 404;
+  if (normalized.includes("completed") || normalized.includes("skipped")) return 409;
+  if (normalized.includes("processing")) return 409;
+  if (normalized.includes("permission") || normalized.includes("authorized")) return 403;
+  return 400;
+}
+
+async function finalizeAttachmentRun({
+  supabase,
+  attachmentId,
+  organizationId,
+  ocrRunId,
+  values,
+}: {
+  supabase: SupabaseClient;
+  attachmentId: string;
+  organizationId: string;
+  ocrRunId: string;
+  values: Record<string, unknown>;
+}) {
+  const { data, error } = await supabase
+    .from("email_attachments")
+    .update(values)
+    .eq("id", attachmentId)
+    .eq("organization_id", organizationId)
+    .eq("ocr_status", "processing")
+    .eq("ocr_run_id", ocrRunId)
+    .select("id")
+    .maybeSingle();
+
+  return { updated: Boolean(data), error };
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   const { attachmentId } = await context.params;
+  let claimedRun:
+    | {
+        supabase: SupabaseClient;
+        organizationId: string;
+        ocrRunId: string;
+      }
+    | null = null;
 
   try {
     const user = await getCurrentUser();
@@ -113,52 +209,6 @@ export async function POST(_request: Request, context: RouteContext) {
     const isPdf =
       normalizedContentType === "application/pdf" || lowerFileName.endsWith(".pdf");
 
-    if (isPdf && (attachment.size_bytes ?? 0) > maxLocalPdfExtractionBytes) {
-      await supabase
-        .from("email_attachments")
-        .update({
-          ocr_status: "failed",
-          extraction_method: "pdf_text",
-          extraction_error: largePdfMessage,
-          extracted_at: new Date().toISOString(),
-          raw_extraction: {
-            sizeBytes: attachment.size_bytes,
-            maxLocalPdfExtractionBytes,
-          },
-        })
-        .eq("id", attachment.id)
-        .eq("organization_id", organization.id);
-
-      return Response.json(
-        {
-          success: false,
-          error: largePdfMessage,
-        },
-        { status: 400 },
-      );
-    }
-
-    if (isImage && (attachment.size_bytes ?? 0) > maxImageOcrBytes) {
-      await supabase
-        .from("email_attachments")
-        .update({
-          ocr_status: "failed",
-          extraction_method: "image_ocr",
-          extraction_error: "Image is too large for OCR. Please upload a smaller file.",
-          extracted_at: new Date().toISOString(),
-        })
-        .eq("id", attachment.id)
-        .eq("organization_id", organization.id);
-
-      return Response.json(
-        {
-          success: false,
-          error: "Image is too large for OCR. Please upload a smaller file.",
-        },
-        { status: 400 },
-      );
-    }
-
     const { data: email, error: emailError } = await supabase
       .from("email_messages")
       .select("id, rfq_id")
@@ -183,11 +233,107 @@ export async function POST(_request: Request, context: RouteContext) {
       );
     }
 
-    await supabase
-      .from("email_attachments")
-      .update({ ocr_status: "processing", extraction_error: null })
-      .eq("id", attachment.id)
-      .eq("organization_id", organization.id);
+    const { data: claimData, error: claimError } = await supabase.rpc(
+      "begin_attachment_extraction",
+      {
+        p_attachment_id: attachmentId,
+      },
+    );
+
+    if (claimError) {
+      return Response.json(
+        {
+          success: false,
+          error: "Unable to begin attachment extraction.",
+          details: claimError.message,
+        },
+        { status: 400 },
+      );
+    }
+
+    const claim = normalizeBeginAttachmentExtractionResult(claimData);
+    if (!claim) {
+      return Response.json(
+        {
+          success: false,
+          error: "Unable to begin attachment extraction.",
+          details: "The extraction claim response was invalid.",
+        },
+        { status: 400 },
+      );
+    }
+
+    if (!claim.ok || !claim.claimed || !claim.ocr_run_id) {
+      return Response.json(
+        {
+          success: false,
+          claimed: false,
+          error: claim.error_message || "Attachment extraction is not available.",
+          attempts: claim.ocr_attempts,
+        },
+        { status: claimStatusCode(claim.error_message) },
+      );
+    }
+
+    const claimedOcrRunId = claim.ocr_run_id;
+    const claimedAttachmentId = attachment.id;
+    claimedRun = {
+      supabase,
+      organizationId: organization.id,
+      ocrRunId: claimedOcrRunId,
+    };
+
+    async function failClaimedRun(message: string, values?: Record<string, unknown>) {
+      return finalizeAttachmentRun({
+        supabase,
+        attachmentId: claimedAttachmentId,
+        organizationId: organization.id,
+        ocrRunId: claimedOcrRunId,
+        values: {
+          ...(values ?? {}),
+          ocr_status: "failed",
+          extraction_error: message,
+          ocr_run_id: null,
+        },
+      });
+    }
+
+    if (isPdf && (attachment.size_bytes ?? 0) > maxLocalPdfExtractionBytes) {
+      const finalized = await failClaimedRun(largePdfMessage, {
+        extraction_method: "pdf_text",
+        raw_extraction: {
+          sizeBytes: attachment.size_bytes,
+          maxLocalPdfExtractionBytes,
+        },
+      });
+      claimedRun = null;
+
+      return Response.json(
+        {
+          success: false,
+          error: largePdfMessage,
+          staleRun: !finalized.updated,
+        },
+        { status: 400 },
+      );
+    }
+
+    if (isImage && (attachment.size_bytes ?? 0) > maxImageOcrBytes) {
+      const details = "Image is too large for OCR. Please upload a smaller file.";
+      const finalized = await failClaimedRun(details, {
+        extraction_method: "image_ocr",
+      });
+      claimedRun = null;
+
+      return Response.json(
+        {
+          success: false,
+          error: details,
+          staleRun: !finalized.updated,
+        },
+        { status: 400 },
+      );
+    }
 
     const { data: file, error: downloadError } = await supabase.storage
       .from(attachmentBucket)
@@ -195,21 +341,15 @@ export async function POST(_request: Request, context: RouteContext) {
 
     if (downloadError || !file) {
       const details = downloadError?.message ?? "Unable to download attachment from storage.";
-      await supabase
-        .from("email_attachments")
-        .update({
-          ocr_status: "failed",
-          extraction_error: details,
-          extracted_at: new Date().toISOString(),
-        })
-        .eq("id", attachment.id)
-        .eq("organization_id", organization.id);
+      const finalized = await failClaimedRun(details);
+      claimedRun = null;
 
       return Response.json(
         {
           success: false,
           error: "Attachment download failed",
           details,
+          staleRun: !finalized.updated,
         },
         { status: 400 },
       );
@@ -218,25 +358,55 @@ export async function POST(_request: Request, context: RouteContext) {
     const fileBuffer = Buffer.from(await file.arrayBuffer());
 
     if (isPdf && fileBuffer.byteLength > maxLocalPdfExtractionBytes) {
-      await supabase
-        .from("email_attachments")
-        .update({
-          ocr_status: "failed",
-          extraction_method: "pdf_text",
-          extraction_error: largePdfMessage,
-          extracted_at: new Date().toISOString(),
-          raw_extraction: {
-            sizeBytes: fileBuffer.byteLength,
-            maxLocalPdfExtractionBytes,
-          },
-        })
-        .eq("id", attachment.id)
-        .eq("organization_id", organization.id);
+      const finalized = await failClaimedRun(largePdfMessage, {
+        extraction_method: "pdf_text",
+        raw_extraction: {
+          sizeBytes: fileBuffer.byteLength,
+          maxLocalPdfExtractionBytes,
+        },
+      });
+      claimedRun = null;
+
+      if (finalized.error) {
+        return Response.json(
+          { success: false, error: finalized.error.message },
+          { status: 400 },
+        );
+      }
 
       return Response.json(
         {
           success: false,
           error: largePdfMessage,
+          staleRun: !finalized.updated,
+        },
+        { status: 400 },
+      );
+    }
+
+    if (isImage && fileBuffer.byteLength > maxImageOcrBytes) {
+      const details = "Image is too large for OCR. Please upload a smaller file.";
+      const finalized = await failClaimedRun(details, {
+        extraction_method: "image_ocr",
+        raw_extraction: {
+          sizeBytes: fileBuffer.byteLength,
+          maxImageOcrBytes,
+        },
+      });
+      claimedRun = null;
+
+      if (finalized.error) {
+        return Response.json(
+          { success: false, error: finalized.error.message },
+          { status: 400 },
+        );
+      }
+
+      return Response.json(
+        {
+          success: false,
+          error: details,
+          staleRun: !finalized.updated,
         },
         { status: 400 },
       );
@@ -248,34 +418,13 @@ export async function POST(_request: Request, context: RouteContext) {
       contentType: attachment.content_type,
     });
 
-    const extractedAt = new Date().toISOString();
-    const { error: updateError } = await supabase
-      .from("email_attachments")
-      .update({
-        ocr_status: extraction.status,
-        extracted_text: extraction.text || null,
-        extraction_method: extraction.method,
-        extraction_error: extraction.error,
-        extracted_at: extractedAt,
-        raw_extraction: extraction.raw,
-      })
-      .eq("id", attachment.id)
-      .eq("organization_id", organization.id);
-
-    if (updateError) {
-      return Response.json(
-        { success: false, error: updateError.message },
-        { status: 400 },
-      );
-    }
-
     let extractedItemCount = 0;
     let supplierQuoteTableDetected = false;
     let ollamaAssist:
       | Awaited<ReturnType<typeof extractRfqItemsWithOllama>>
       | null = null;
+    let items: ExtractedRfqItem[] = [];
     if (extraction.text) {
-      let items: ExtractedRfqItem[];
       try {
         supplierQuoteTableDetected = isSupplierQuoteTableText(extraction.text);
         items = extractRfqItemsFromEmailText(extraction.text);
@@ -285,107 +434,92 @@ export async function POST(_request: Request, context: RouteContext) {
         });
         items = mergeExtractedItems(items, ollamaAssist.items);
       } catch (error) {
+        const details =
+          error instanceof Error ? error.message : "Unable to detect RFQ items.";
+        const finalized = await failClaimedRun("RFQ item extraction failed", {
+          extracted_text: extraction.text,
+          extraction_method: extraction.method,
+          raw_extraction: {
+            ...extraction.raw,
+            itemExtractionError: details,
+          },
+        });
+        claimedRun = null;
+
         return Response.json(
           {
             success: false,
             error: "RFQ item extraction failed",
-            details:
-              error instanceof Error ? error.message : "Unable to detect RFQ items.",
+            details,
+            staleRun: !finalized.updated,
           },
           { status: 400 },
         );
       }
-
-      await supabase
-        .from("attachment_extracted_items")
-        .delete()
-        .eq("organization_id", organization.id)
-        .eq("email_attachment_id", attachment.id)
-        .in("status", ["pending", "rejected"]);
-
-      if (items.length) {
-        const { data: existingItems, error: existingItemsError } = await supabase
-          .from("attachment_extracted_items")
-          .select("description, quantity, unit")
-          .eq("organization_id", organization.id)
-          .eq("email_attachment_id", attachment.id);
-
-        if (existingItemsError) {
-          return Response.json(
-            { success: false, error: existingItemsError.message },
-            { status: 400 },
-          );
-        }
-
-        const existingKeys = new Set(
-          (existingItems ?? []).map((item) =>
-            itemKey({
-              description: String(item.description ?? ""),
-              quantity: Number(item.quantity ?? 0),
-              unit: item.unit as string | null,
-            }),
-          ),
-        );
-        const pendingRows = [];
-
-        for (const item of items) {
-          const key = itemKey(item);
-          if (existingKeys.has(key)) continue;
-          existingKeys.add(key);
-          pendingRows.push({
-            organization_id: organization.id,
-            email_message_id: attachment.email_message_id,
-            email_attachment_id: attachment.id,
-            description: item.description,
-            quantity: item.quantity,
-            unit: item.unit,
-            notes: item.notes ?? null,
-            confidence:
-              item.confidence ?? (extraction.method === "image_ocr" ? 0.6 : 0.75),
-            status: "pending",
-          });
-        }
-
-        extractedItemCount = pendingRows.length;
-
-        if (pendingRows.length > 0) {
-          const { error: itemError } = await supabase
-            .from("attachment_extracted_items")
-            .insert(pendingRows);
-
-          if (itemError) {
-            return Response.json(
-              { success: false, error: itemError.message },
-              { status: 400 },
-            );
-          }
-        }
-      }
-
-      if (ollamaAssist?.enabled) {
-        await supabase
-          .from("email_attachments")
-          .update({
-            raw_extraction: {
-              ...extraction.raw,
-              ollama: {
-                enabled: ollamaAssist.enabled,
-                used: ollamaAssist.used,
-                unavailable: ollamaAssist.unavailable,
-                error: ollamaAssist.error,
-                metadata: ollamaAssist.metadata,
-              },
-            },
-          })
-          .eq("id", attachment.id)
-          .eq("organization_id", organization.id);
-      }
     }
 
-    revalidatePath(`/email-intake/${attachment.email_message_id}`);
-    revalidatePath(`/rfqs/${email.rfq_id}`);
+    const rawExtraction = ollamaAssist?.enabled
+      ? {
+          ...extraction.raw,
+          ollama: {
+            enabled: ollamaAssist.enabled,
+            used: ollamaAssist.used,
+            unavailable: ollamaAssist.unavailable,
+            error: ollamaAssist.error,
+            metadata: ollamaAssist.metadata,
+          },
+        }
+      : extraction.raw;
 
-    if (extraction.status === "failed") {
+    const extractedAt = new Date().toISOString();
+    if (extraction.status === "failed" || extraction.status === "skipped") {
+      const finalValues =
+        extraction.status === "skipped"
+          ? {
+              ocr_status: "skipped",
+              extracted_text: null,
+              extraction_method: extraction.method,
+              extraction_error: extraction.error,
+              extracted_at: extractedAt,
+              raw_extraction: rawExtraction,
+              ocr_run_id: null,
+            }
+          : {
+              ocr_status: "failed",
+              extracted_text: extraction.text || null,
+              extraction_method: extraction.method,
+              extraction_error:
+                extraction.error || "Attachment text extraction failed.",
+              extracted_at: extractedAt,
+              raw_extraction: rawExtraction,
+              ocr_run_id: null,
+            };
+      const updateResult = await finalizeAttachmentRun({
+        supabase,
+        attachmentId: attachment.id,
+        organizationId: organization.id,
+        ocrRunId: claimedOcrRunId,
+        values: finalValues,
+      });
+      claimedRun = null;
+
+      if (updateResult.error) {
+        return Response.json(
+          { success: false, error: updateResult.error.message },
+          { status: 400 },
+        );
+      }
+
+      if (!updateResult.updated) {
+        return Response.json(
+          {
+            success: false,
+            error: "This extraction attempt was superseded by a newer run.",
+          },
+          { status: 409 },
+        );
+      }
+
       const imageOcrFailed = extraction.method === "image_ocr";
       const noReadablePdfText =
         isPdf && extraction.error?.startsWith("This PDF may be scanned");
@@ -393,18 +527,24 @@ export async function POST(_request: Request, context: RouteContext) {
       return Response.json(
         {
           success: false,
-          error: noReadablePdfText
-            ? "No readable PDF text found"
-            : imageOcrFailed
-              ? extraction.error?.startsWith("No readable text found")
-                ? "No readable text found in image"
-                : "Image OCR failed"
-            : isPdf
-              ? "PDF text extraction failed"
-              : "Attachment text extraction failed",
-          details: noReadablePdfText
-            ? extraction.error
-            : extraction.error ?? "Attachment text extraction failed.",
+          error:
+            extraction.status === "skipped"
+              ? extraction.error || "Unsupported attachment type"
+              : noReadablePdfText
+                ? "No readable PDF text found"
+                : imageOcrFailed
+                  ? extraction.error?.startsWith("No readable text found")
+                    ? "No readable text found in image"
+                    : "Image OCR failed"
+                  : isPdf
+                    ? "PDF text extraction failed"
+                    : "Attachment text extraction failed",
+          details:
+            extraction.status === "skipped"
+              ? extraction.error
+              : noReadablePdfText
+                ? extraction.error
+                : extraction.error ?? "Attachment text extraction failed.",
           extractedTextPreview: extraction.text.slice(0, 1000),
           extractedItemCount,
           method: extraction.method,
@@ -414,12 +554,135 @@ export async function POST(_request: Request, context: RouteContext) {
       );
     }
 
+    const candidateItems = items.map((item) => ({
+      description: item.description,
+      quantity: item.quantity,
+      unit: item.unit,
+      notes: item.notes ?? null,
+      confidence:
+        item.confidence ?? (extraction.method === "image_ocr" ? 0.6 : 0.75),
+    }));
+    const { data: replacementData, error: replacementError } = await supabase.rpc(
+      "replace_attachment_extracted_items",
+      {
+        p_email_attachment_id: attachment.id,
+        p_ocr_run_id: claimedOcrRunId,
+        p_items: candidateItems,
+      },
+    );
+
+    if (replacementError) {
+      const details = replacementError.message;
+      const finalized = await failClaimedRun("Attachment item replacement failed", {
+        extracted_text: extraction.text,
+        extraction_method: extraction.method,
+        extracted_at: extractedAt,
+        raw_extraction: {
+          ...rawExtraction,
+          itemReplacementError: details,
+        },
+      });
+      claimedRun = null;
+
+      return Response.json(
+        {
+          success: false,
+          error: "Attachment item replacement failed",
+          details,
+          staleRun: !finalized.updated,
+        },
+        { status: 400 },
+      );
+    }
+
+    const replacement = normalizeReplaceAttachmentExtractedItemsResult(replacementData);
+    if (!replacement || !replacement.ok) {
+      const details =
+        replacement?.error_message ||
+        "Attachment item replacement did not complete successfully.";
+      const finalized = await failClaimedRun("Attachment item replacement failed", {
+        extracted_text: extraction.text,
+        extraction_method: extraction.method,
+        extracted_at: extractedAt,
+        raw_extraction: {
+          ...rawExtraction,
+          itemReplacementError: details,
+        },
+      });
+      claimedRun = null;
+
+      return Response.json(
+        {
+          success: false,
+          error: "Attachment item replacement failed",
+          details,
+          staleRun: !finalized.updated,
+        },
+        { status: 400 },
+      );
+    }
+
+    extractedItemCount = replacement.inserted_count;
+
+    const updateResult = await finalizeAttachmentRun({
+      supabase,
+      attachmentId: attachment.id,
+      organizationId: organization.id,
+      ocrRunId: claimedOcrRunId,
+      values: {
+        ocr_status: "completed",
+        extracted_text: extraction.text,
+        extraction_method: extraction.method,
+        extraction_error: null,
+        extracted_at: extractedAt,
+        raw_extraction: rawExtraction,
+        ocr_run_id: null,
+      },
+    });
+
+    if (updateResult.error) {
+      await failClaimedRun("Attachment extraction finalization failed", {
+        extracted_text: extraction.text,
+        extraction_method: extraction.method,
+        extracted_at: extractedAt,
+        raw_extraction: {
+          ...rawExtraction,
+          finalizationError: updateResult.error.message,
+        },
+      });
+      claimedRun = null;
+
+      return Response.json(
+        { success: false, error: updateResult.error.message },
+        { status: 400 },
+      );
+    }
+
+    if (!updateResult.updated) {
+      claimedRun = null;
+
+      return Response.json(
+        {
+          success: false,
+          error: "This extraction attempt was superseded by a newer run.",
+        },
+        { status: 409 },
+      );
+    }
+
+    claimedRun = null;
+
+    revalidatePath(`/email-intake/${attachment.email_message_id}`);
+    revalidatePath(`/rfqs/${email.rfq_id}`);
+
     return Response.json({
       success: true,
       extractedTextPreview: extraction.text.slice(0, 1000),
       extractedItemCount,
+      insertedCount: replacement.inserted_count,
+      preservedCount: replacement.preserved_count,
       warning:
-        extraction.text && extractedItemCount === 0
+        extraction.text && replacement.inserted_count + replacement.preserved_count === 0
           ? supplierQuoteTableDetected
             ? "Text was extracted, but no clean item table rows were detected."
             : "Text was extracted, but no RFQ item rows were detected."
@@ -438,15 +701,19 @@ export async function POST(_request: Request, context: RouteContext) {
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Attachment text extraction failed.";
-    const supabase = await createClient();
-    await supabase
-      .from("email_attachments")
-      .update({
-        ocr_status: "failed",
-        extraction_error: message,
-        extracted_at: new Date().toISOString(),
-      })
-      .eq("id", attachmentId);
+    if (claimedRun) {
+      await finalizeAttachmentRun({
+        supabase: claimedRun.supabase,
+        attachmentId,
+        organizationId: claimedRun.organizationId,
+        ocrRunId: claimedRun.ocrRunId,
+        values: {
+          ocr_status: "failed",
+          extraction_error: message,
+          ocr_run_id: null,
+        },
+      });
+    }
 
     return Response.json(
       {

@@ -173,30 +173,86 @@ export async function POST() {
           for (const attachment of attachments) {
             const fileName = safeStorageFileName(attachment.fileName);
             let attachmentContent = attachment;
-            const { data: attachmentRow, error: attachmentError } = await supabase
+            const { data: existingAttachment, error: existingAttachmentError } = await supabase
               .from("email_attachments")
-              .upsert(
-                {
-                  organization_id: organization.id,
-                  email_message_id: emailMessage.id,
-                  provider_attachment_id: attachment.providerAttachmentId,
+              .select("id, storage_path, ocr_status")
+              .eq("organization_id", organization.id)
+              .eq("email_message_id", emailMessage.id)
+              .eq("provider_attachment_id", attachment.providerAttachmentId)
+              .maybeSingle();
+
+            if (existingAttachmentError) {
+              console.warn(
+                "Microsoft attachment metadata lookup failed",
+                existingAttachmentError.message,
+              );
+              continue;
+            }
+
+            let attachmentRow = existingAttachment;
+            if (!attachmentRow) {
+              const { data: insertedAttachment, error: insertAttachmentError } =
+                await supabase
+                  .from("email_attachments")
+                  .insert({
+                    organization_id: organization.id,
+                    email_message_id: emailMessage.id,
+                    provider_attachment_id: attachment.providerAttachmentId,
+                    file_name: fileName,
+                    content_type: attachment.contentType,
+                    size_bytes: attachment.sizeBytes,
+                    storage_path: null,
+                    ocr_status: "pending",
+                    extraction_error: null,
+                  })
+                    .select("id, storage_path, ocr_status")
+                  .single();
+
+              if (insertAttachmentError) {
+                console.warn(
+                  "Microsoft attachment metadata save failed",
+                  insertAttachmentError.message,
+                );
+                continue;
+              }
+
+              attachmentRow = insertedAttachment;
+            }
+
+            if (!attachmentRow) {
+              console.warn("Microsoft attachment metadata save failed", {
+                attachmentName: fileName,
+              });
+              continue;
+            }
+
+            if (existingAttachment) {
+              const { error: metadataUpdateError } = await supabase
+                .from("email_attachments")
+                .update({
                   file_name: fileName,
                   content_type: attachment.contentType,
                   size_bytes: attachment.sizeBytes,
-                  storage_path: null,
-                  ocr_status: "pending",
-                  extraction_error: null,
-                },
-                { onConflict: "organization_id,email_message_id,provider_attachment_id" },
-              )
-              .select("id")
-              .single();
+                })
+                .eq("id", attachmentRow.id)
+                .eq("organization_id", organization.id);
 
-            if (attachmentError || !attachmentRow) {
-              console.warn(
-                "Microsoft attachment metadata save failed",
-                attachmentError?.message ?? "No attachment row returned.",
-              );
+              if (metadataUpdateError) {
+                console.warn(
+                  "Microsoft attachment metadata refresh failed",
+                  metadataUpdateError.message,
+                );
+              }
+            }
+
+            if (attachmentRow.storage_path) {
+              continue;
+            }
+
+            if (
+              existingAttachment &&
+              !["pending", "failed"].includes(existingAttachment.ocr_status || "pending")
+            ) {
               continue;
             }
 
@@ -221,7 +277,7 @@ export async function POST() {
                 await supabase
                   .from("email_attachments")
                   .update({
-                    ocr_status: "skipped",
+                    ocr_status: "failed",
                     extraction_error: downloadMessage,
                   })
                   .eq("id", attachmentRow.id)
@@ -240,7 +296,7 @@ export async function POST() {
               await supabase
                 .from("email_attachments")
                 .update({
-                  ocr_status: "skipped",
+                  ocr_status: "failed",
                   extraction_error: "Attachment contentBytes missing.",
                 })
                 .eq("id", attachmentRow.id)
