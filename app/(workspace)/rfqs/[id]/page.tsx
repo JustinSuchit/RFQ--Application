@@ -915,6 +915,7 @@ export default async function RfqDetailPage({ params }: PageProps) {
                                           emailId={email.id}
                                           itemId={item.id}
                                           status={item.status}
+                                          rfqItemId={item.rfq_item_id}
                                         />
                                       </td>
                                     </tr>

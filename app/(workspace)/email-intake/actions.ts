@@ -29,6 +29,13 @@ type CreateRfqFromEmailResult = {
   error_message: string | null;
 };
 
+type AcceptExtractedItemResult = {
+  ok: boolean;
+  rfq_item_id: string | null;
+  created: boolean;
+  error_message: string | null;
+};
+
 const initialState: EmailIntakeState = { error: "" };
 const deleteEmailRoles = new Set(["owner", "admin", "manager", "procurement"]);
 
@@ -68,6 +75,44 @@ async function logActivity(
   if (error) {
     console.error("Activity log insert failed", error.message);
   }
+}
+
+async function acceptExtractedItem(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  extractedItemId: string,
+  rfqId: string,
+) {
+  const { data, error } = await supabase.rpc("accept_extracted_item", {
+    p_extracted_item_id: extractedItemId,
+    p_rfq_id: rfqId,
+  });
+
+  if (error) {
+    return {
+      error: "Unable to add this extracted item. Please try again.",
+      result: null,
+    };
+  }
+
+  const result = (Array.isArray(data) ? data[0] : data) as
+    | AcceptExtractedItemResult
+    | null;
+
+  if (!result) {
+    return {
+      error: "Unable to add this extracted item. Please try again.",
+      result: null,
+    };
+  }
+
+  if (!result.ok) {
+    return {
+      error: result.error_message || "Unable to add this extracted item.",
+      result,
+    };
+  }
+
+  return { error: "", result };
 }
 
 export async function createManualEmailAction(
@@ -550,7 +595,7 @@ export async function updateAttachmentExtractedItemStatusAction(
   _previousState: EmailIntakeState,
   formData: FormData,
 ): Promise<EmailIntakeState> {
-  const user = await requireUser();
+  await requireUser();
   const organization = await requireOrganization();
   const emailId = text(formData, "emailId");
   const itemId = text(formData, "itemId");
@@ -621,82 +666,25 @@ export async function updateAttachmentExtractedItemStatusAction(
     return { error: "", success: "Item rejected." };
   }
 
-  if (item.rfq_item_id || item.status === "imported") {
-    return { error: "This item has already been imported." };
-  }
-
-  const { data: rfqItem, error: rfqItemError } = await supabase
-    .from("rfq_items")
-    .insert({
-      organization_id: organization.id,
-      rfq_id: rfq.id,
-      description: item.description,
-      quantity: item.quantity ?? 1,
-      unit: item.unit,
-      notes: item.notes || "Imported from attachment OCR",
-      required_date: null,
-    })
-    .select("id")
-    .single();
-
-  if (rfqItemError || !rfqItem) {
-    return {
-      error: `RFQ item insert failed: ${
-        rfqItemError?.message ?? "Unable to import extracted item."
-      }`,
-    };
-  }
-
-  const { data: importedItem, error: updateError } = await supabase
-    .from("attachment_extracted_items")
-    .update({
-      status: "imported",
-      rfq_item_id: rfqItem.id,
-    })
-    .eq("id", itemId)
-    .eq("organization_id", organization.id)
-    .eq("email_message_id", emailId)
-    .is("rfq_item_id", null)
-    .select("id")
-    .maybeSingle();
-
-  if (updateError) return { error: updateError.message };
-
-  if (!importedItem) {
-    await supabase
-      .from("rfq_items")
-      .delete()
-      .eq("id", rfqItem.id)
-      .eq("organization_id", organization.id);
-    return { error: "This item has already been imported." };
-  }
-
-  const { error: activityError } = await supabase.from("activity_logs").insert({
-    organization_id: organization.id,
-    rfq_id: rfq.id,
-    user_id: user.id,
-    action: "Attachment item imported to RFQ",
-    details: {
-      rfq_id: rfq.id,
-      imported_item_count: 1,
-      attachment_extracted_item_ids: [item.id],
-    },
-  });
-
-  if (activityError) {
-    console.warn("Activity log insert failed", activityError.message);
-  }
+  const { error, result } = await acceptExtractedItem(supabase, item.id, rfq.id);
 
   revalidatePath(`/email-intake/${emailId}`);
   revalidatePath(`/rfqs/${rfq.id}`);
-  return { error: "", success: "Item imported into RFQ." };
+  if (error || !result) return { error };
+
+  return {
+    error: "",
+    success: result.created
+      ? "Item added to Requested Items."
+      : "This extracted item has already been added.",
+  };
 }
 
 export async function importAcceptedAttachmentItemsAction(
   _previousState: EmailIntakeState,
   formData: FormData,
 ): Promise<EmailIntakeState> {
-  const user = await requireUser();
+  await requireUser();
   const organization = await requireOrganization();
   const emailId = text(formData, "emailId");
   const rfqId = text(formData, "rfqId");
@@ -760,7 +748,7 @@ export async function importAcceptedAttachmentItemsAction(
 
   const { data: items, error: itemsError } = await supabase
     .from("attachment_extracted_items")
-    .select("id, description, quantity, unit, notes")
+    .select("id")
     .eq("organization_id", organization.id)
     .in("email_message_id", linkedEmailIds)
     .eq("status", "accepted")
@@ -785,83 +773,43 @@ export async function importAcceptedAttachmentItemsAction(
   }
 
   let importedCount = 0;
+  let alreadyAddedCount = 0;
 
   for (const item of items) {
-    const { data: rfqItem, error: itemError } = await supabase
-      .from("rfq_items")
-      .insert({
-        organization_id: organization.id,
-        rfq_id: targetRfqId,
-        description: item.description,
-        quantity: item.quantity ?? 1,
-        unit: item.unit,
-        notes: item.notes || "Imported from attachment OCR",
-        required_date: null,
-      })
-      .select("id")
-      .single();
+    const { error, result } = await acceptExtractedItem(
+      supabase,
+      item.id,
+      targetRfqId,
+    );
 
-    if (itemError || !rfqItem) {
-      return { error: itemError?.message ?? "Unable to import attachment item." };
+    if (error || !result) {
+      revalidatePath(`/email-intake/${revalidateEmailId}`);
+      revalidatePath(`/rfqs/${targetRfqId}`);
+      return { error };
     }
 
-    const { error: updateError } = await supabase
-      .from("attachment_extracted_items")
-      .update({
-        status: "imported",
-        rfq_item_id: rfqItem.id,
-      })
-      .eq("id", item.id)
-      .eq("organization_id", organization.id)
-      .is("rfq_item_id", null)
-      .select("id")
-      .maybeSingle();
-
-    if (updateError) return { error: updateError.message };
-    const { data: importedItem } = await supabase
-      .from("attachment_extracted_items")
-      .select("id")
-      .eq("id", item.id)
-      .eq("organization_id", organization.id)
-      .eq("rfq_item_id", rfqItem.id)
-      .maybeSingle();
-
-    if (!importedItem) {
-      await supabase
-        .from("rfq_items")
-        .delete()
-        .eq("id", rfqItem.id)
-        .eq("organization_id", organization.id);
-      continue;
+    if (result.created) {
+      importedCount += 1;
+    } else {
+      alreadyAddedCount += 1;
     }
-
-    importedCount += 1;
-  }
-
-  if (importedCount === 0) {
-    return { error: "No new accepted items to import." };
-  }
-
-  const { error: activityError } = await supabase.from("activity_logs").insert({
-    organization_id: organization.id,
-    rfq_id: targetRfqId,
-    user_id: user.id,
-    action: "Attachment items imported to RFQ",
-    details: {
-      rfq_id: targetRfqId,
-      imported_item_count: importedCount,
-      attachment_extracted_item_ids: items.map((item) => item.id),
-    },
-  });
-
-  if (activityError) {
-    console.warn("Activity log insert failed", activityError.message);
   }
 
   revalidatePath(`/email-intake/${revalidateEmailId}`);
   revalidatePath(`/rfqs/${targetRfqId}`);
+
+  if (importedCount === 0 && alreadyAddedCount > 0) {
+    return {
+      error: "",
+      success: "All accepted attachment items have already been imported.",
+    };
+  }
+
   return {
     error: "",
-    success: `Imported ${importedCount} attachment items into this RFQ.`,
+    success:
+      alreadyAddedCount > 0
+        ? `Imported ${importedCount} attachment items into this RFQ. ${alreadyAddedCount} were already added.`
+        : `Imported ${importedCount} attachment items into this RFQ.`,
   };
 }

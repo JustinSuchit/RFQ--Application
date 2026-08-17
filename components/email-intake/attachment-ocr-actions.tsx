@@ -226,10 +226,12 @@ export function AttachmentExtractedItemActions({
   emailId,
   itemId,
   status,
+  rfqItemId,
 }: {
   emailId: string;
   itemId: string;
   status: string;
+  rfqItemId?: string | null;
 }) {
   const router = useRouter();
   const [state, action, pending] = useActionState(
@@ -243,9 +245,9 @@ export function AttachmentExtractedItemActions({
     }
   }, [router, state.success]);
 
-  if (status === "imported") {
+  if (rfqItemId || status === "imported") {
     return (
-      <p className="text-xs font-semibold text-teal-700">Imported to RFQ</p>
+      <p className="text-xs font-semibold text-teal-700">Already added</p>
     );
   }
 
@@ -275,7 +277,7 @@ export function AttachmentExtractedItemActions({
           disabled={pending || status === "imported"}
           className="inline-flex h-8 items-center rounded-md border border-teal-200 px-2.5 text-xs font-semibold text-teal-700 disabled:cursor-not-allowed disabled:text-slate-400"
         >
-          Accept
+          {pending ? "Adding..." : "Accept"}
         </button>
       </form>
       <form action={action}>
@@ -287,7 +289,7 @@ export function AttachmentExtractedItemActions({
           disabled={pending || status === "imported"}
           className="inline-flex h-8 items-center rounded-md border border-rose-200 px-2.5 text-xs font-semibold text-rose-700 disabled:cursor-not-allowed disabled:text-slate-400"
         >
-          Reject
+          {pending ? "Rejecting..." : "Reject"}
         </button>
       </form>
       <Message state={state} />
