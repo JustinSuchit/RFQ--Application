@@ -13,15 +13,20 @@ import {
   normalizeEmailSubject,
   threadPositionFromDate,
 } from "@/lib/email/threading";
-import {
-  generateNextRfqNumber,
-  isUniqueViolation,
-} from "@/lib/rfqs/numbering";
 import { createClient } from "@/lib/supabase/server";
 
 export type EmailIntakeState = {
   error: string;
   success?: string;
+  redirectTo?: string;
+};
+
+type CreateRfqFromEmailResult = {
+  ok: boolean;
+  rfq_id: string | null;
+  rfq_number: string | null;
+  created: boolean;
+  error_message: string | null;
 };
 
 const initialState: EmailIntakeState = { error: "" };
@@ -413,7 +418,6 @@ export async function createRfqFromEmailAction(
   _previousState: EmailIntakeState,
   formData: FormData,
 ): Promise<EmailIntakeState> {
-  const user = await requireUser();
   const organization = await requireOrganization();
   const supabase = await createClient();
   const id = text(formData, "id");
@@ -431,195 +435,115 @@ export async function createRfqFromEmailAction(
     return { error: emailError?.message ?? "Email was not found." };
   }
 
-  if (email.rfq_id) {
-    redirect(`/rfqs/${email.rfq_id}`);
-  }
+  const { data, error: rpcError } = await supabase.rpc("create_rfq_from_email", {
+    p_email_message_id: id,
+  });
 
-  const { data: existingCustomers, error: customerLookupError } = await supabase
-    .from("customers")
-    .select("id")
-    .eq("organization_id", organization.id)
-    .eq("email", email.from_email)
-    .limit(1);
-
-  if (customerLookupError) return { error: customerLookupError.message };
-
-  let customerId = existingCustomers?.[0]?.id as string | undefined;
-
-  if (!customerId) {
-    const { data: customer, error: customerError } = await supabase
-      .from("customers")
-      .insert({
-        organization_id: organization.id,
-        company_name: email.from_name || email.from_email,
-        contact_name: email.from_name,
-        email: email.from_email,
-      })
-      .select("id")
-      .single();
-
-    if (customerError || !customer) {
-      return { error: customerError?.message ?? "Unable to create customer." };
-    }
-
-    customerId = customer.id;
-  }
-
-  let rfq: { id: string } | null = null;
-  let rfqNumber = "";
-  let lastInsertError: { message: string; code?: string } | null = null;
-
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    const numberResult = await generateNextRfqNumber({
-      supabase,
-      organizationId: organization.id,
-      offset: attempt,
+  if (rpcError) {
+    console.error("create_rfq_from_email RPC failed", {
+      email_message_id: id,
+      organization_id: organization.id,
+      message: rpcError.message,
+      code: rpcError.code,
     });
-
-    if (numberResult.error) return { error: numberResult.error };
-
-    rfqNumber = numberResult.rfqNumber;
-    const { data: insertedRfq, error: rfqError } = await supabase
-      .from("rfqs")
-      .insert({
-        organization_id: organization.id,
-        customer_id: customerId,
-        rfq_number: rfqNumber,
-        subject: email.subject,
-        source: "manual_email",
-        priority: "normal",
-        status: "draft",
-        review_status: "new",
-        next_action: "Review original email",
-        last_activity_at: new Date().toISOString(),
-        notes: email.body_text ?? email.body ?? email.body_preview,
-        created_by: user.id,
-      })
-      .select("id")
-      .single();
-
-    if (!rfqError && insertedRfq) {
-      rfq = insertedRfq;
-      break;
-    }
-
-    lastInsertError = rfqError;
-    if (!isUniqueViolation(rfqError)) break;
+    return { error: "Unable to create an RFQ from this email. Please try again." };
   }
 
-  if (!rfq) {
-    return {
-      error: isUniqueViolation(lastInsertError)
-        ? "Could not generate a unique RFQ number. Please try again."
-        : lastInsertError?.message ?? "Unable to create RFQ.",
-    };
+  const rpcData = data as CreateRfqFromEmailResult | CreateRfqFromEmailResult[] | null;
+  const result = Array.isArray(rpcData) ? rpcData[0] : rpcData;
+
+  if (!result) {
+    console.error("create_rfq_from_email RPC returned no result", {
+      email_message_id: id,
+      organization_id: organization.id,
+    });
+    return { error: "Unable to create an RFQ from this email. Please try again." };
   }
 
-  const { data: linkedEmail, error: linkEmailError } = await supabase
-    .from("email_messages")
-    .update({
-      classification: "likely_rfq",
-      is_rfq: true,
-      rfq_id: rfq.id,
-      thread_key: email.thread_key ?? fallbackThreadKey({
-        organizationId: organization.id,
-        subject: email.subject,
-        fromEmail: email.from_email,
-        body: email.body_text ?? email.body ?? email.body_preview,
-      }),
-      normalized_subject: normalizeEmailSubject(email.subject),
-    })
-    .eq("id", id)
-    .eq("organization_id", organization.id)
-    .is("rfq_id", null)
-    .select("id")
-    .maybeSingle();
-
-  if (linkEmailError) {
-    await supabase
-      .from("rfqs")
-      .delete()
-      .eq("id", rfq.id)
-      .eq("organization_id", organization.id);
-    return { error: linkEmailError.message };
+  if (!result.ok) {
+    return { error: result.error_message || "Unable to create an RFQ from this email." };
   }
 
-  if (!linkedEmail) {
-    const { data: alreadyLinkedEmail } = await supabase
-      .from("email_messages")
-      .select("rfq_id")
-      .eq("id", id)
-      .eq("organization_id", organization.id)
-      .maybeSingle();
-
-    await supabase
-      .from("rfqs")
-      .delete()
-      .eq("id", rfq.id)
-      .eq("organization_id", organization.id);
-
-    if (alreadyLinkedEmail?.rfq_id) {
-      redirect(`/rfqs/${alreadyLinkedEmail.rfq_id}`);
-    }
-
-    return { error: "This email is already linked to an RFQ." };
+  if (!result.rfq_id) {
+    console.error("create_rfq_from_email RPC returned success without rfq_id", {
+      email_message_id: id,
+      organization_id: organization.id,
+      created: result.created,
+    });
+    return { error: "The RFQ was created, but its destination could not be determined." };
   }
 
   let extractedItems: ExtractedRfqItem[] = [];
 
-  try {
-    extractedItems = extractRfqItemsFromEmailText(
-      [email.subject, email.body_preview, email.body_text, email.body].filter(Boolean).join("\n"),
-    );
-  } catch {
-    extractedItems = [];
-  }
-
-  console.log("Extracted RFQ items", extractedItems);
-
-  if (extractedItems.length > 0) {
-    const { error: itemInsertError } = await supabase.from("rfq_items").insert(
-      extractedItems.map((item) => ({
-        organization_id: organization.id,
-        rfq_id: rfq.id,
-        description: item.description,
-        quantity: item.quantity,
-        unit: item.unit,
-        notes: item.notes ?? null,
-      })),
-    );
-
-    if (itemInsertError) {
-      return { error: itemInsertError.message };
+  if (result.created) {
+    try {
+      extractedItems = extractRfqItemsFromEmailText(
+        [email.subject, email.body_preview, email.body_text, email.body].filter(Boolean).join("\n"),
+      );
+    } catch {
+      extractedItems = [];
     }
-  } else {
-    console.log("No requested items could be extracted from this email.", {
-      email_message_id: id,
-      rfq_id: rfq.id,
-    });
+
+    console.log("Extracted RFQ items", extractedItems);
+
+    if (extractedItems.length > 0) {
+      const { error: itemInsertError } = await supabase.from("rfq_items").insert(
+        extractedItems.map((item) => ({
+          organization_id: organization.id,
+          rfq_id: result.rfq_id,
+          description: item.description,
+          quantity: item.quantity,
+          unit: item.unit,
+          notes: item.notes ?? null,
+        })),
+      );
+
+      if (itemInsertError) {
+        console.warn("RFQ item extraction insert failed after email RFQ creation", {
+          email_message_id: id,
+          rfq_id: result.rfq_id,
+          message: itemInsertError.message,
+        });
+      }
+    } else {
+      console.log("No requested items could be extracted from this email.", {
+        email_message_id: id,
+        rfq_id: result.rfq_id,
+      });
+    }
+
+    const reviewStatus = extractedItems.length > 0 ? "awaiting_pricing" : "missing_items";
+    const { error: reviewUpdateError } = await supabase
+      .from("rfqs")
+      .update({
+        review_status: reviewStatus,
+        next_action: extractedItems.length > 0 ? "Add pricing" : "Extract requested items",
+        last_activity_at: new Date().toISOString(),
+      })
+      .eq("id", result.rfq_id)
+      .eq("organization_id", organization.id);
+
+    if (reviewUpdateError) {
+      console.warn("RFQ review status update failed after email RFQ creation", {
+        email_message_id: id,
+        rfq_id: result.rfq_id,
+        message: reviewUpdateError.message,
+      });
+    }
   }
 
-  const reviewStatus = extractedItems.length > 0 ? "awaiting_pricing" : "missing_items";
-  await supabase
-    .from("rfqs")
-    .update({
-      review_status: reviewStatus,
-      next_action: extractedItems.length > 0 ? "Add pricing" : "Extract requested items",
-      last_activity_at: new Date().toISOString(),
-    })
-    .eq("id", rfq.id)
-    .eq("organization_id", organization.id);
-
-  await logActivity(supabase, organization.id, user.id, "RFQ created from email", {
-    email_message_id: id,
-    rfq_id: rfq.id,
-    rfq_number: rfqNumber,
-    extracted_item_count: extractedItems.length,
-    attachment_item_count: 0,
-  });
   revalidatePath("/email-intake");
+  revalidatePath(`/email-intake/${id}`);
   revalidatePath("/rfqs");
-  redirect(`/rfqs/${rfq.id}`);
+  revalidatePath(`/rfqs/${result.rfq_id}`);
+
+  return {
+    error: "",
+    success: result.created
+      ? "RFQ created successfully."
+      : "An RFQ has already been created from this email.",
+    redirectTo: `/rfqs/${result.rfq_id}`,
+  };
 }
 
 export async function updateAttachmentExtractedItemStatusAction(

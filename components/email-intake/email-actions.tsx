@@ -1,7 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   createRfqFromEmailAction,
   markEmailClassificationAction,
@@ -10,8 +11,10 @@ import {
 
 const initialState: EmailIntakeState = { error: "" };
 
-function Message({ error }: { error: string }) {
-  return error ? <p className="text-sm font-medium text-rose-600">{error}</p> : null;
+function Message({ error, success }: { error: string; success?: string }) {
+  if (error) return <p className="text-sm font-medium text-rose-600">{error}</p>;
+  if (success) return <p className="text-sm font-medium text-teal-700">{success}</p>;
+  return null;
 }
 
 export function EmailClassificationActions({
@@ -23,6 +26,7 @@ export function EmailClassificationActions({
   hasRfq: boolean;
   rfqId?: string | null;
 }) {
+  const router = useRouter();
   const [markState, markAction, markPending] = useActionState(
     markEmailClassificationAction,
     initialState,
@@ -31,6 +35,12 @@ export function EmailClassificationActions({
     createRfqFromEmailAction,
     initialState,
   );
+
+  useEffect(() => {
+    if (rfqState.redirectTo) {
+      router.push(rfqState.redirectTo);
+    }
+  }, [rfqState.redirectTo, router]);
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -61,7 +71,7 @@ export function EmailClassificationActions({
           href={`/rfqs/${rfqId}`}
           className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          Open Linked RFQ
+          View RFQ
         </Link>
       ) : (
         <form action={rfqAction}>
@@ -70,11 +80,11 @@ export function EmailClassificationActions({
             disabled={rfqPending}
             className="inline-flex h-10 items-center justify-center rounded-md bg-slate-950 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {rfqPending ? "Creating RFQ..." : "Create RFQ from Email"}
+            {rfqPending ? "Creating RFQ..." : "Create RFQ"}
           </button>
         </form>
       )}
-      <Message error={markState.error || rfqState.error} />
+      <Message error={markState.error || rfqState.error} success={markState.success || rfqState.success} />
     </div>
   );
 }
